@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Integration of Redis with Python · Redis Eğitimi</title>
+<style>
+:root{color-scheme:light;--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--white:#fff;--soft:#eaf3fb;--amber:#a45b00;--red:#a52a2a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.62 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}
+.top{position:sticky;top:0;z-index:4;background:#fff;border-bottom:1px solid var(--line);padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;gap:1rem}.brand{font-weight:800}.topnav{display:flex;gap:.8rem;align-items:center}.topnav a{font-size:.9rem;font-weight:700}
+.layout{max-width:1440px;margin:auto;display:grid;grid-template-columns:255px minmax(0,1fr);gap:1.4rem;padding:1.2rem}.side{position:sticky;top:68px;align-self:start;max-height:calc(100vh - 84px);overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:1rem}.side h2{font-size:1rem;margin:.1rem 0 .6rem}.side a{display:block;padding:.28rem .4rem;text-decoration:none;font-size:.88rem;border-radius:5px}.side a:hover{background:var(--soft)}
+main{min-width:0}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin-bottom:1rem}.hero h1{line-height:1.2;margin:.2rem 0 .7rem;font-size:clamp(1.8rem,4vw,2.7rem)}.meta{display:flex;flex-wrap:wrap;gap:.55rem}.badge{border:1px solid #bad5e7;background:var(--soft);border-radius:99px;padding:.15rem .7rem;font-size:.88rem;font-weight:700}.card h2{margin:0 0 .75rem;font-size:1.45rem}.card h3{margin:1.3rem 0 .4rem}.card h4{margin:.8rem 0 .25rem}.card p:first-child{margin-top:0}.card ul,.card ol{padding-left:1.4rem}.note,.warn,.expert,.trainer,.info{border-left:5px solid var(--blue);border-radius:7px;padding:.85rem 1rem;margin:.8rem 0;background:#edf5fc}.trainer{border-color:var(--teal);background:#eaf7f6}.expert{border-color:#7046a1;background:#f4effa}.warn{border-color:var(--amber);background:#fff5e4}.errorbox{border-color:var(--red);background:#fff0ef}.speaker{font-style:italic;background:#fff;border:1px solid #c9dce6;padding:.7rem;border-radius:6px}.step{border:1px solid var(--line);border-radius:8px;padding:.8rem;margin:.7rem 0;background:#fbfdff}.step label{display:block}.step input,.checklist input{margin-right:.35rem;accent-color:var(--teal)}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px;tab-size:2;white-space:pre;max-width:100%}pre code{font: .9rem/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.copy{position:absolute;right:.45rem;top:.4rem;border:1px solid #adc5d8;border-radius:5px;background:#fff;color:#172b4d;padding:.2rem .55rem;cursor:pointer}.lang{position:absolute;top:.53rem;left:.75rem;color:#b6d8f1;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}code:not(pre code){background:#edf1f5;border-radius:4px;padding:.08rem .28rem;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid var(--line);padding:.6rem;text-align:left;vertical-align:top;min-width:130px}th{background:#eaf3fb}.tabs{border:1px solid var(--line);padding:.7rem;border-radius:8px;background:#fff}.tab{border:1px solid #b8cbd8;background:#f2f6f9;padding:.45rem .8rem;border-radius:6px 6px 0 0;cursor:pointer;font:inherit;font-weight:700;color:var(--ink)}.tab.active{background:#1264a3;color:white}.tab-panel{display:none;padding:.6rem}.tab-panel.active{display:block}.diagram{margin:1rem 0;padding:.8rem;background:#fbfdff;border:1px solid var(--line);border-radius:8px}.diagram figcaption{font-weight:700;margin-bottom:.6rem}.diagram svg{display:block;width:100%;height:auto;max-height:260px}.diagram text{font:14px system-ui,-apple-system,"Segoe UI",sans-serif;fill:#172b4d}.checklist{list-style:none;padding:0!important}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:#fff;border:1px solid var(--line);border-radius:8px;padding:.7rem 1rem;text-decoration:none;font-weight:700}.footer{color:var(--muted);font-size:.88rem;text-align:center;padding:1rem}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.side{position:relative;top:auto;max-height:240px}.top{position:relative}.topnav{flex-wrap:wrap;justify-content:flex-end}}
+@media(max-width:560px){body{font-size:15px}.layout{padding:.6rem}.top{align-items:flex-start;flex-direction:column}.topnav{justify-content:flex-start}.pager{flex-direction:column}.hero,.card{padding:1rem}}
+@media print{body{background:#fff;font-size:10pt}.top,.side,.copy,.tabs button,.pager,.footer{display:none!important}.layout{display:block;padding:0;max-width:none}.hero,.card{border:0;break-inside:avoid;padding:.4rem;margin:.3rem 0}.tab-panel{display:block!important}pre{white-space:pre-wrap;overflow:visible;background:#f1f3f5;color:#111}.step{break-inside:avoid}a{color:#111;text-decoration:none}}
+</style>
+</head>
+<body>
+<header class="top"><div class="brand">Redis · Kurumsal Geliştirici Eğitimi</div><nav class="topnav" aria-label="Sayfa navigasyonu"><a href="01-yol-haritasi.html">Ana menü</a><a href="06-ileri-islemler.html">← Önceki</a><a href="08-yuksek-erisebilirlik.html">Sonraki →</a></nav></header>
+<div class="layout">
+<aside class="side" aria-label="İçindekiler ve sayfa navigasyonu"><h2>Bu sayfa</h2><a href="#hedefler">Öğrenme hedefleri</a><a href="#egitmen">Eğitmen notu</a><a href="#kavram">Kavramsal anlatım</a><a href="#lab">Adım adım lab</a><a href="#beklenen">Beklenen çıktılar</a><a href="#hatalar">Hatalar ve çözümleri</a><a href="#alistirma">Mini alıştırmalar</a><a href="#ozet">Özet / kontrol listesi</a><hr><h2>13 sayfa</h2><a href="01-yol-haritasi.html" aria-label="Sayfa 1">01 · Yol haritası</a>
+<a href="02-redis-temelleri.html" >02 · Redis Basics</a>
+<a href="03-kurulum-temel-kavramlar.html" >03 · Kurulum &amp; temel kavramlar</a>
+<a href="04-veri-yapilari-1.html" >04 · Veri yapıları I</a>
+<a href="05-veri-yapilari-2.html" >05 · Veri yapıları II</a>
+<a href="06-ileri-islemler.html" >06 · İleri işlemler</a>
+<a href="07-python-entegrasyonu.html" >07 · Python entegrasyonu</a>
+<a href="08-yuksek-erisebilirlik.html" >08 · HA &amp; replication</a>
+<a href="09-cache-kullanimi.html" >09 · Cache kullanımı</a>
+<a href="10-pubsub-streams.html" >10 · Pub/Sub &amp; Streams</a>
+<a href="11-lua-scripting.html" >11 · Lua scripting</a>
+<a href="12-veritabani-optimizasyonu.html" >12 · Veritabanı optimizasyonu</a>
+<a href="13-guvenlik-kapanis.html" >13 · Güvenlik &amp; kapanış</a></aside>
+<main>
+<header class="hero"><p><b>[ŞİRKET ADI / GENEL] · Redis Eğitimi</b></p><h1>Integration of Redis with Python</h1><div class="meta"><span class="badge">Sayfa 07 / 13</span><span class="badge">Tahmini süre: 120 dk</span><span class="badge">Seviye: Başlangıç → İleri</span><span class="badge">Eğitim süresi: [X gün / Y saat]</span></div><p>Bu sayfa bağımsız HTML'dir; internet bağlantısı gerektirmez. Eğitim lab dosyaları <code>redis-egitimi/docker/</code>, <code>redis-egitimi/python/</code> ve <code>redis-egitimi/labs/</code> altında tutulur.</p></header>
+<section class="card" id="hedefler"><h2>1. Öğrenme hedefleri</h2><ul><li>venv ve requirements.txt ile izole proje kurmak</li><li>redis-py bağlantı havuzu, timeout ve hata yönetimi kullanmak</li><li>Python'dan temel Redis yapılarını uygulamak</li><li>sync/async istemciyi ayırmak ve Flask/FastAPI entegrasyonunu tasarlamak</li></ul><h3>Bu sayfaya başlamadan önce hazır olması gerekenler</h3><p>Python 3.x, VS Code Python extension, Docker Desktop ve 01. sayfadaki `redis-egitimi/` klasör yapısı hazır olmalı.</p></section>
+<section class="card" id="egitmen"><h2>2. Eğitmen notu</h2><div class="trainer"><b>Sınıfa açılış ve aktarım dili</b><p class="speaker">“Şimdi Redis komutlarını gerçek bir uygulama sürecine alıyoruz. Bağlantı havuzunu, timeout'u ve veri serileştirmeyi doğru kurmak önemlidir; çalışan bir `PING` tek başına üretim entegrasyonu değildir.”</p><b>Sorulabilecek sorular</b><ul><li>Neden her HTTP isteğinde yeni Redis TCP bağlantısı açmıyoruz?</li><li>JSON serileştirmenin schema değişimine etkisi nedir?</li><li>Timeout ve retry yanlış kullanılırsa yük neden artabilir?</li></ul><b>Sınıf içi tuzaklar</b><p>Sync Redis client'ı async event loop içinde bloklayıcı biçimde kullanmayın. Retry'ı sınırsız yapmayın. `decode_responses=True` bytes/string davranışını değiştirir; binary payload için uygun olmayabilir. RedisError'dan daha geniş exception'ları sessizce yutmayın.</p></div></section>
+<section class="card" id="kavram"><h2>3. Kavramsal anlatım: neden → nedir → nasıl</h2><h3>Neden?</h3><p>Uygulamanın her istekte TCP bağlantısı kurması gecikme ve kaynak tüketimi ekler. redis-py connection pool bağlantıları tekrar kullanır. Timeout sınırsız beklemeyi engeller; bounded retry geçici hataları yönetir ama outage sırasında retry storm yaratmamalıdır.</p><h3>Nedir?</h3><p>redis-py sync `redis.Redis` ve async `redis.asyncio.Redis` API'leri sağlar. Client pool'u varsayılan olarak bağlantıları yönetir. `decode_responses=True` string döndürür. Hata tipleri redis-py exception hiyerarşisindedir. Serialization bir schema/versiyon kararıdır; Python `pickle` güvenilmeyen veride kod çalıştırma riski taşır, kullanmayın.</p><h3>Nasıl?</h3><p>Proje `python/` altında venv, requirements.txt, `app.py` içerir. Redis URL'si environment variable ile verilebilir. Lab'ta basit değer, hash, pipeline, transaction, Lua, Pub/Sub, async ve web framework cache örneği aşamalı uygulanır.</p><div class="expert"><b>UZMAN NOTU · Üretim, performans ve güvenlik</b><p>Pool max_connections, connect/socket timeout ve health check ayarı workload'a göre seçilip ölçülür; sınırsız retry yok. Redis `decode_responses=True` UTF-8 veriye uygundur, binary data için bytes kullanın. Async client kapatılmalı (`aclose` güncel redis-py API); sürüm API'sini pinleyip doğrulayın. Web cache key'inde tenant/authorization context ve invalidation kapsamı unutulmamalı.</p></div></section>
+<section class="card" id="lab"><h2>4. Adım adım uygulama (Lab)</h2><p>Her checkbox sayfa içi ilerleme içindir; durum kaydedilmez. Komutları verilen sırayla uygulayın. Kod bloklarının sağ üstündeki <b>Kopyala</b> düğmesi içeriği panoya alır.</p>
+      <h3>1. Sanal ortam ve paket kurulumu</h3>
+      <div class="tabs"><button class="tab active" type="button" data-tab="win">Windows PowerShell</button><button class="tab" type="button" data-tab="mac">macOS Terminal</button>
+      <div class="tab-panel active" data-panel="win"><ol><li><b>Windows · PowerShell</b>: proje klasörüne geçin.<pre><code>cd $HOME\redis-egitimi\python</code></pre></li><li><b>Windows · PowerShell</b>: sanal ortam oluşturun.<pre><code>py -m venv .venv</code></pre></li><li><b>Windows · PowerShell</b>: sanal ortamı etkinleştirin.<pre><code>.\.venv\Scripts\Activate.ps1</code></pre></li><li><b>Windows · PowerShell</b>: pip'i güncelleyin.<pre><code>python -m pip install --upgrade pip</code></pre></li></ol><p>Venv Python ortamını proje içinde izole eder; aktivasyon bu shell'i venv'e yönlendirir. ExecutionPolicy engelinde: <code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code> (kurum politikası izin veriyorsa), PowerShell'i kapatıp açın. Global policy'yi düşürmeyin.</p></div>
+      <div class="tab-panel" data-panel="mac"><ol><li><b>macOS · Terminal</b>: proje klasörüne geçin.<pre><code>cd ~/redis-egitimi/python</code></pre></li><li><b>macOS · Terminal</b>: sanal ortam oluşturun.<pre><code>python3 -m venv .venv</code></pre></li><li><b>macOS · Terminal</b>: sanal ortamı etkinleştirin.<pre><code>source .venv/bin/activate</code></pre></li><li><b>macOS · Terminal</b>: pip'i güncelleyin.<pre><code>python -m pip install --upgrade pip</code></pre></li></ol><p>Shell prompt başında `(.venv)` beklenir. Her yeni terminalde aktivasyonu tekrarlayın.</p></div></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b> → File → Open Folder… → `redis-egitimi/python`. Explorer → New File → `requirements.txt`, tam içerik:</label><pre><code>redis==&lt;verified-version&gt;
+Flask==&lt;verified-version&gt;</code></pre><p>İki placeholder'ı sınıf öncesi PyPI'dan doğrulanmış sabit sürümlerle değiştirin; `latest`/tahmini sürüm yazmayın. Flask bu sayfadaki opsiyonel web lab'ı içindir. `hiredis` zorunlu değildir; ölçümle gereksinim doğrulanmadan eklemeyin.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code Terminal</b>: aktif venv içinde requirements dosyasındaki paketleri yükleyin.</label><pre><code>python -m pip install -r requirements.txt</code></pre><p>Placeholder'ları gerçek pinlenmiş sürümlere çevirdikten sonra kurulum başarılı olmalı.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code Terminal</b>: kurulu paketleri doğrulayın.</label><pre><code>python -m pip list</code></pre><p>`redis` ve venv içindeki `pip` görünür olmalı.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b> → Command Palette (Ctrl+Shift+P / ⇧⌘P) → <b>Python: Select Interpreter</b> → `redis-egitimi/python/.venv` interpreter'ını seçin.</label></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b> → `app.py` oluşturun ve aşağıdaki tam kodu kaydedin. `REDIS_URL` verilmezse local compose adresini kullanır.</label><pre><code>from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+import redis
+from redis.exceptions import RedisError
+
+
+def main() -&gt; None:
+    url = os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;)
+    client = redis.Redis.from_url(
+        url,
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        max_connections=20,
+    )
+    try:
+        client.ping()
+        product: dict[str, Any] = {&quot;id&quot;: 42, &quot;name&quot;: &quot;Kahve&quot;, &quot;price&quot;: 12.5}
+        client.set(&quot;py:product:42&quot;, json.dumps(product), ex=60)
+        raw = client.get(&quot;py:product:42&quot;)
+        print(&quot;PING: PONG&quot;)
+        print(&quot;Product:&quot;, json.loads(raw) if raw is not None else None)
+        client.hset(&quot;py:cart:7&quot;, mapping={&quot;SKU-42&quot;: 2, &quot;SKU-9&quot;: 1})
+        print(&quot;Cart:&quot;, client.hgetall(&quot;py:cart:7&quot;))
+        client.set(&quot;py:views:42&quot;, 0)
+        with client.pipeline(transaction=False) as pipe:
+            pipe.incr(&quot;py:views:42&quot;)
+            pipe.incr(&quot;py:views:42&quot;)
+            print(&quot;Pipeline:&quot;, pipe.execute())
+        with client.pipeline(transaction=True) as pipe:
+            pipe.set(&quot;py:transaction:status&quot;, &quot;queued&quot;)
+            pipe.incr(&quot;py:transaction:count&quot;)
+            print(&quot;Transaction:&quot;, pipe.execute())
+    except RedisError as exc:
+        raise RuntimeError(f&quot;Redis operation failed: {exc}&quot;) from exc
+    finally:
+        client.close()
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre><p>`from_url` URL'den bağlantı kurar; `decode_responses` string döndürür; connect/socket timeout ve max pool limitleri bounded'dır; JSON tip ipuçlu dict'i saklar; pipeline ağ turunu azaltır; `RedisError` görünür hata üretir; finally client pool'u kapatır.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b>: Run → <b>Run Without Debugging</b> (Ctrl+F5 / Ctrl+F5) veya sağ üst Run Python File ile çalıştırın.</label></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows PowerShell/macOS Terminal</b>: Python sürümünü doğrulayın.</label><pre><code>python --version</code></pre><p>Python 3.x olmalı.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows PowerShell/macOS Terminal</b>: aktif interpreter'daki paketleri listeleyin.</label><pre><code>python -m pip list</code></pre><p>Pinlenmiş redis-py sürümü görünür.</p></div>
+      <h3>2. Async API farkı (tam çalıştırılabilir örnek)</h3>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b>: `async_demo.py` oluşturun.</label><pre><code>import asyncio
+import os
+
+import redis.asyncio as redis
+
+
+async def main() -&gt; None:
+    client = redis.Redis.from_url(
+        os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;),
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+    try:
+        print(&quot;PING:&quot;, await client.ping())
+        await client.set(&quot;py:async:demo&quot;, &quot;ready&quot;, ex=30)
+        print(&quot;Value:&quot;, await client.get(&quot;py:async:demo&quot;))
+    finally:
+        await client.aclose()
+
+
+if __name__ == &quot;__main__&quot;:
+    asyncio.run(main())</code></pre><p>Async komutlar `await` edilir; event loop içinde blocking client kullanılmaz; client pool `aclose()` ile kapatılır. VS Code terminalinde <code>python async_demo.py</code> çalıştırın; `PING: True`, `Value: ready` beklenir.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b>: `structures_demo.py` dosyasını `python/` içinde oluşturun.</label><pre><code>import os
+import redis
+
+
+def main() -&gt; None:
+    client = redis.Redis.from_url(os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;), decode_responses=True)
+    try:
+        client.set(&quot;py:t:string&quot;, &quot;hello&quot;, ex=60)
+        client.rpush(&quot;py:t:list&quot;, &quot;job-1&quot;, &quot;job-2&quot;)
+        client.sadd(&quot;py:t:set&quot;, &quot;redis&quot;, &quot;python&quot;)
+        client.hset(&quot;py:t:hash&quot;, mapping={&quot;name&quot;: &quot;Kahve&quot;})
+        client.zadd(&quot;py:t:zset&quot;, {&quot;alice&quot;: 120, &quot;bob&quot;: 95})
+        client.setbit(&quot;py:t:bitmap&quot;, 7, 1)
+        client.pfadd(&quot;py:t:hll&quot;, &quot;u1&quot;, &quot;u2&quot;)
+        client.geoadd(&quot;py:t:geo&quot;, [(29.0, 41.0, &quot;shop-a&quot;)])
+        client.xadd(&quot;py:t:stream&quot;, {&quot;type&quot;: &quot;created&quot;})
+        print(client.get(&quot;py:t:string&quot;), client.lrange(&quot;py:t:list&quot;, 0, -1))
+        print(client.smembers(&quot;py:t:set&quot;), client.hgetall(&quot;py:t:hash&quot;))
+        print(client.zrange(&quot;py:t:zset&quot;, 0, -1, withscores=True))
+        print(client.bitcount(&quot;py:t:bitmap&quot;), client.pfcount(&quot;py:t:hll&quot;))
+        print(client.geosearch(&quot;py:t:geo&quot;, longitude=29.0, latitude=41.0, radius=10, unit=&quot;km&quot;))
+        print(client.xrange(&quot;py:t:stream&quot;, min=&quot;-&quot;, max=&quot;+&quot;))
+    finally:
+        client.close()
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre><p>Metotlar sırasıyla String, List, Set, Hash, Sorted Set, Bitmap, HyperLogLog, GEO ve Stream API'leridir. `python structures_demo.py` çıktısında hello/list, üyeler/Hash, skor sırası, 1/2 sayımları, shop-a ve Stream kaydı görünür. redis-py sürümünde `geosearch` imzasını kurulumda doğrulayın.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b>: `retry_demo.py` oluşturun; yalnızca idempotent GET için iki denemeli retry.</label><pre><code>import os
+import time
+      from typing import Optional
+
+import redis
+from redis.exceptions import ConnectionError, TimeoutError
+
+
+def read_with_retry(client: redis.Redis, key: str) -&gt; Optional[str]:
+    for attempt in range(2):
+        try:
+            return client.get(key)
+        except (ConnectionError, TimeoutError):
+            if attempt == 1:
+                raise
+            time.sleep(0.1)
+    raise RuntimeError(&quot;unreachable retry state&quot;)
+
+
+client = redis.Redis.from_url(os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;), decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+try:
+    print(read_with_retry(client, &quot;py:product:42&quot;))
+finally:
+    client.close()</code></pre><p>En fazla 2 deneme; yalnızca bağlantı/timeout hataları; ikinci hata çağırana yükselir. Write komutlarını körlemesine retry etmeyin. Üretimde deadline, backoff+jitter, idempotency ve retry budget gerekir.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · VS Code</b>: `flask_cache.py` oluşturun.</label><pre><code>import json
+import os
+
+import redis
+from flask import Flask, jsonify
+from redis.exceptions import RedisError
+
+
+app = Flask(__name__)
+client = redis.Redis.from_url(os.getenv(&quot;REDIS_URL&quot;, &quot;redis://localhost:6379/0&quot;), decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+
+
+@app.get(&quot;/products/&lt;int:product_id&gt;&quot;)
+def get_product(product_id: int):
+    key = f&quot;web:catalog:product:{product_id}&quot;
+    try:
+        cached = client.get(key)
+        if cached is not None:
+            return jsonify(json.loads(cached)), 200
+        value = {&quot;id&quot;: product_id, &quot;name&quot;: &quot;Kahve&quot;}
+        client.set(key, json.dumps(value), ex=60)
+        return jsonify(value), 200
+    except RedisError:
+        app.logger.exception(&quot;Redis cache unavailable&quot;)
+        return jsonify({&quot;error&quot;: &quot;cache unavailable&quot;}), 503
+
+
+if __name__ == &quot;__main__&quot;:
+    app.run(host=&quot;127.0.0.1&quot;, port=5000, debug=False)</code></pre><p>Cache-aside route; Redis failure loglanır ve bu örnek fail-closed olarak 503 döner. `python flask_cache.py` çalıştırın, tarayıcıda `http://127.0.0.1:5000/products/42` açın; JSON beklenir. Flask development server yalnızca local lab içindir.</p></div>
+      <div class="info">FastAPI async handler'da `redis.asyncio` seçin ve lifespan/shutdown'da `aclose()` çağırın. Her iki framework'te de production için kaynak DB, auth/tenant-aware key, invalidation, request deadline ve outage policy ekleyin.</div></section>
+<section class="card" id="beklenen"><h2>5. Beklenen çıktılar</h2><p>Aktif venv içinde `pip list` Flask ve redis-py sürümlerini gösterir. `app.py` PING, JSON, Hash cart, pipeline ve transaction sonuçları verir. Async demo `PING: True`, `Value: ready`; structures demo her Redis tipini; Flask route JSON yanıtı verir.</p></section>
+<section class="card errorbox" id="hatalar"><h2>6. Sık karşılaşılan hatalar ve çözümleri</h2><table><thead><tr><th>Hata mesajı (örnek)</th><th>Neden</th><th>Çözüm</th></tr></thead><tbody><tr><td><code>ModuleNotFoundError: No module named 'redis'</code></td><td>Paket farklı interpreter'a kuruldu veya venv aktif değil.</td><td>VS Code interpreter'ını `.venv` seçin; terminalde aktivasyon sonrası `python -m pip install -r requirements.txt` çalıştırın.</td></tr><tr><td><code>redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.</code></td><td>Compose Redis çalışmıyor/port farklı.</td><td>`docker compose ps` kontrol edin; Compose'u başlatın; `REDIS_URL` host portunu doğrulayın.</td></tr><tr><td><code>ExecutionPolicy ... running scripts is disabled</code></td><td>PowerShell venv activation script engellendi.</td><td>Şirket politikası izin veriyorsa `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`; alternatif olarak `.venv\Scripts\python.exe` ile doğrudan çalıştırın.</td></tr><tr><td><code>TypeError: object bool can't be used in 'await' expression</code></td><td>Sync Redis client ile async API karıştırıldı.</td><td>`redis.asyncio` client'ı kullanın; sync client method'larında `await` kullanmayın.</td></tr><tr><td><code>TimeoutError: Timeout connecting to server</code></td><td>Ağ/port yok veya timeout çok düşük.</td><td>Local Redis sağlık kontrolü ve doğru URL'yi doğrulayın; gerçek latency SLO'ya göre timeout'u bilinçli ayarlayın.</td></tr></tbody></table></section>
+<section class="card" id="alistirma"><h2>7. Mini alıştırmalar</h2><h3>Kolay</h3><p>JSON `dumps`/`loads` bu örnekte ne yapar?</p><h3>Orta</h3><p>Pipeline `transaction=False` neyi sağlar, neyi sağlamaz?</p><h3>Zor</h3><p>Retry eklerken hangi üç sınırı belirlemelisiniz?</p><details><summary><b>Cevap anahtarını aç/kapat</b></summary><ol><li>Python dict'i JSON metnine çevirip geri dict'e dönüştürür.</li><li>Round-trip sayısını azaltır; birden çok komutun atomik olmasını sağlamaz.</li><li>Retry edilebilir hata sınıfı/idempotency, maksimum deneme + backoff/jitter, toplam request deadline ve hata görünürlüğü.</li></ol></details></section>
+<section class="card" id="ozet"><h2>8. Özet ve kontrol listesi</h2><ul class="checklist"><li><label><input type="checkbox"> venv/requirements/interpreter doğrulandı</label></li><li><label><input type="checkbox"> Pool, timeout ve cleanup kullanıldı</label></li><li><label><input type="checkbox"> JSON + Redis Hash/pipeline denendi</label></li><li><label><input type="checkbox"> Sync ve async ayrımı açıklanabilir</label></li><li><label><input type="checkbox"> Secret içeren URL loglanmıyor</label></li></ul><p><b>Bir sonraki sayfa:</b> <a href="08-yuksek-erisebilirlik.html">08. High Availability and Replication</a></p></section>
+<nav class="pager" aria-label="Önceki ve sonraki sayfa"><a href="06-ileri-islemler.html">← 06. İleri işlemler</a><a href="08-yuksek-erisebilirlik.html">08. HA &amp; replication →</a></nav>
+<p class="footer">Redis eğitimi · Kurum içi kullanım için · Komut ve arayüz adları kurulu sürümde doğrulanmalıdır.</p>
+</main></div>
+<script>
+document.querySelectorAll("pre").forEach((pre) => {
+  const code = pre.querySelector("code");
+  const sample = (code?.innerText ?? "").trim();
+  const label = document.createElement("span"); label.className = "lang";
+  label.textContent = /^(from |import )/.test(sample) ? "PYTHON"
+    : /^(services:|x-redis-node:)/.test(sample) ? "YAML"
+    : /^redis==/.test(sample) ? "REQUIREMENTS"
+    : /^(port d+|appendonly |dir )/.test(sample) ? "REDIS CONF"
+    : /^(docker |docker$|wsl |brew |python |python3 |py |cd |uname |Set-ExecutionPolicy)/.test(sample) ? "SHELL"
+    : "REDIS CLI";
+  label.setAttribute("aria-hidden", "true");
+  const button = document.createElement("button"); button.className = "copy"; button.type = "button"; button.textContent = "Kopyala";
+  button.setAttribute("aria-label", "Kod bloğunu kopyala");
+  button.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(code?.innerText ?? ""); button.textContent = "Kopyalandı"; setTimeout(() => button.textContent = "Kopyala", 1400); }
+    catch { button.textContent = "Kopyalama başarısız"; setTimeout(() => button.textContent = "Kopyala", 1800); }
+  });
+  pre.append(label, button);
+});
+document.querySelectorAll(".tabs").forEach((tabs) => {
+  const buttons = [...tabs.querySelectorAll(".tab")], panels = [...tabs.querySelectorAll(".tab-panel")];
+  buttons.forEach((button, index) => {
+    const selected = button.classList.contains("active");
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(selected));
+    button.setAttribute("aria-controls", "tab-panel-" + index);
+    button.tabIndex = selected ? 0 : -1;
+    panels[index]?.setAttribute("id", "tab-panel-" + index);
+    panels[index]?.setAttribute("role", "tabpanel");
+    if (panels[index]) panels[index].hidden = !selected;
+  });
+  buttons.forEach((button) => button.addEventListener("click", () => {
+    const name = button.dataset.tab;
+    buttons.forEach((item) => {
+      const selected = item === button;
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-selected", String(selected));
+      item.tabIndex = selected ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const selected = panel.dataset.panel === name;
+      panel.classList.toggle("active", selected);
+      panel.hidden = !selected;
+    });
+  }));
+});
+</script>
+</body></html>

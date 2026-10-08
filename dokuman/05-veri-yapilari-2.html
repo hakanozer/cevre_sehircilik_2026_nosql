@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Data Structures II: Sorted Set, Bitmap, HyperLogLog, Geospatial, Stream · Redis Eğitimi</title>
+<style>
+:root{color-scheme:light;--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--white:#fff;--soft:#eaf3fb;--amber:#a45b00;--red:#a52a2a}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.62 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}
+.top{position:sticky;top:0;z-index:4;background:#fff;border-bottom:1px solid var(--line);padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;gap:1rem}.brand{font-weight:800}.topnav{display:flex;gap:.8rem;align-items:center}.topnav a{font-size:.9rem;font-weight:700}
+.layout{max-width:1440px;margin:auto;display:grid;grid-template-columns:255px minmax(0,1fr);gap:1.4rem;padding:1.2rem}.side{position:sticky;top:68px;align-self:start;max-height:calc(100vh - 84px);overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:1rem}.side h2{font-size:1rem;margin:.1rem 0 .6rem}.side a{display:block;padding:.28rem .4rem;text-decoration:none;font-size:.88rem;border-radius:5px}.side a:hover{background:var(--soft)}
+main{min-width:0}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin-bottom:1rem}.hero h1{line-height:1.2;margin:.2rem 0 .7rem;font-size:clamp(1.8rem,4vw,2.7rem)}.meta{display:flex;flex-wrap:wrap;gap:.55rem}.badge{border:1px solid #bad5e7;background:var(--soft);border-radius:99px;padding:.15rem .7rem;font-size:.88rem;font-weight:700}.card h2{margin:0 0 .75rem;font-size:1.45rem}.card h3{margin:1.3rem 0 .4rem}.card h4{margin:.8rem 0 .25rem}.card p:first-child{margin-top:0}.card ul,.card ol{padding-left:1.4rem}.note,.warn,.expert,.trainer,.info{border-left:5px solid var(--blue);border-radius:7px;padding:.85rem 1rem;margin:.8rem 0;background:#edf5fc}.trainer{border-color:var(--teal);background:#eaf7f6}.expert{border-color:#7046a1;background:#f4effa}.warn{border-color:var(--amber);background:#fff5e4}.errorbox{border-color:var(--red);background:#fff0ef}.speaker{font-style:italic;background:#fff;border:1px solid #c9dce6;padding:.7rem;border-radius:6px}.step{border:1px solid var(--line);border-radius:8px;padding:.8rem;margin:.7rem 0;background:#fbfdff}.step label{display:block}.step input,.checklist input{margin-right:.35rem;accent-color:var(--teal)}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px;tab-size:2;white-space:pre;max-width:100%}pre code{font: .9rem/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.copy{position:absolute;right:.45rem;top:.4rem;border:1px solid #adc5d8;border-radius:5px;background:#fff;color:#172b4d;padding:.2rem .55rem;cursor:pointer}.lang{position:absolute;top:.53rem;left:.75rem;color:#b6d8f1;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}code:not(pre code){background:#edf1f5;border-radius:4px;padding:.08rem .28rem;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid var(--line);padding:.6rem;text-align:left;vertical-align:top;min-width:130px}th{background:#eaf3fb}.tabs{border:1px solid var(--line);padding:.7rem;border-radius:8px;background:#fff}.tab{border:1px solid #b8cbd8;background:#f2f6f9;padding:.45rem .8rem;border-radius:6px 6px 0 0;cursor:pointer;font:inherit;font-weight:700;color:var(--ink)}.tab.active{background:#1264a3;color:white}.tab-panel{display:none;padding:.6rem}.tab-panel.active{display:block}.diagram{margin:1rem 0;padding:.8rem;background:#fbfdff;border:1px solid var(--line);border-radius:8px}.diagram figcaption{font-weight:700;margin-bottom:.6rem}.diagram svg{display:block;width:100%;height:auto;max-height:260px}.diagram text{font:14px system-ui,-apple-system,"Segoe UI",sans-serif;fill:#172b4d}.checklist{list-style:none;padding:0!important}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:#fff;border:1px solid var(--line);border-radius:8px;padding:.7rem 1rem;text-decoration:none;font-weight:700}.footer{color:var(--muted);font-size:.88rem;text-align:center;padding:1rem}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.side{position:relative;top:auto;max-height:240px}.top{position:relative}.topnav{flex-wrap:wrap;justify-content:flex-end}}
+@media(max-width:560px){body{font-size:15px}.layout{padding:.6rem}.top{align-items:flex-start;flex-direction:column}.topnav{justify-content:flex-start}.pager{flex-direction:column}.hero,.card{padding:1rem}}
+@media print{body{background:#fff;font-size:10pt}.top,.side,.copy,.tabs button,.pager,.footer{display:none!important}.layout{display:block;padding:0;max-width:none}.hero,.card{border:0;break-inside:avoid;padding:.4rem;margin:.3rem 0}.tab-panel{display:block!important}pre{white-space:pre-wrap;overflow:visible;background:#f1f3f5;color:#111}.step{break-inside:avoid}a{color:#111;text-decoration:none}}
+</style>
+</head>
+<body>
+<header class="top"><div class="brand">Redis · Kurumsal Geliştirici Eğitimi</div><nav class="topnav" aria-label="Sayfa navigasyonu"><a href="01-yol-haritasi.html">Ana menü</a><a href="04-veri-yapilari-1.html">← Önceki</a><a href="06-ileri-islemler.html">Sonraki →</a></nav></header>
+<div class="layout">
+<aside class="side" aria-label="İçindekiler ve sayfa navigasyonu"><h2>Bu sayfa</h2><a href="#hedefler">Öğrenme hedefleri</a><a href="#egitmen">Eğitmen notu</a><a href="#kavram">Kavramsal anlatım</a><a href="#lab">Adım adım lab</a><a href="#beklenen">Beklenen çıktılar</a><a href="#hatalar">Hatalar ve çözümleri</a><a href="#alistirma">Mini alıştırmalar</a><a href="#ozet">Özet / kontrol listesi</a><hr><h2>13 sayfa</h2><a href="01-yol-haritasi.html" aria-label="Sayfa 1">01 · Yol haritası</a>
+<a href="02-redis-temelleri.html" >02 · Redis Basics</a>
+<a href="03-kurulum-temel-kavramlar.html" >03 · Kurulum &amp; temel kavramlar</a>
+<a href="04-veri-yapilari-1.html" >04 · Veri yapıları I</a>
+<a href="05-veri-yapilari-2.html" >05 · Veri yapıları II</a>
+<a href="06-ileri-islemler.html" >06 · İleri işlemler</a>
+<a href="07-python-entegrasyonu.html" >07 · Python entegrasyonu</a>
+<a href="08-yuksek-erisebilirlik.html" >08 · HA &amp; replication</a>
+<a href="09-cache-kullanimi.html" >09 · Cache kullanımı</a>
+<a href="10-pubsub-streams.html" >10 · Pub/Sub &amp; Streams</a>
+<a href="11-lua-scripting.html" >11 · Lua scripting</a>
+<a href="12-veritabani-optimizasyonu.html" >12 · Veritabanı optimizasyonu</a>
+<a href="13-guvenlik-kapanis.html" >13 · Güvenlik &amp; kapanış</a></aside>
+<main>
+<header class="hero"><p><b>[ŞİRKET ADI / GENEL] · Redis Eğitimi</b></p><h1>Data Structures II: Sorted Set, Bitmap, HyperLogLog, Geospatial, Stream</h1><div class="meta"><span class="badge">Sayfa 05 / 13</span><span class="badge">Tahmini süre: 90 dk</span><span class="badge">Seviye: Orta</span><span class="badge">Eğitim süresi: [X gün / Y saat]</span></div><p>Bu sayfa bağımsız HTML'dir; internet bağlantısı gerektirmez. Eğitim lab dosyaları <code>redis-egitimi/docker/</code>, <code>redis-egitimi/python/</code> ve <code>redis-egitimi/labs/</code> altında tutulur.</p></header>
+<section class="card" id="hedefler"><h2>1. Öğrenme hedefleri</h2><ul><li>Sorted Set ile skor sıralaması kurmak</li><li>Bitmap ve HyperLogLog'un kullanım sınırlarını ayırt etmek</li><li>Geospatial yakınlık sorgusunu denemek</li><li>Stream'in append-only kayıt ve consumer-group temelini görmek</li></ul><h3>Bu sayfaya başlamadan önce hazır olması gerekenler</h3><p>Redis CLI erişimi; sayfa 04'teki key/type yaklaşımını bilmek. Tüm örnekler geçici `lab:` key'leridir.</p></section>
+<section class="card" id="egitmen"><h2>2. Eğitmen notu</h2><div class="trainer"><b>Sınıfa açılış ve aktarım dili</b><p class="speaker">“Bu yapılar daha niş görünür ama üretimde leaderboard, günlük aktif kullanıcı tahmini, mağaza yakınlığı ve olay akışı gibi tekrarlanan sorunları kompakt çözer. Ölçüm ve doğruluk gereksinimini yapı seçiminden önce sorun.”</p><b>Sorulabilecek sorular</b><ul><li>Leaderboard'da eşit skorların sırasını nasıl belirlersiniz?</li><li>HyperLogLog neden kesin kullanıcı listesini döndürmez?</li><li>Stream ile Pub/Sub arasındaki dayanıklılık farkı nedir?</li></ul><b>Sınıf içi tuzaklar</b><p>HyperLogLog yaklaşık kardinalite verir; üye listesini veya kullanıcı kimliklerini geri alamazsınız. Sorted Set rank tie-break davranışına iş 로직ini bağlamadan doğrulayın. GEO koordinat sırası longitude, latitude'dır. Stream retention ve consumer pending-entry yönetimi unutulmasın.</p></div></section>
+<section class="card" id="kavram"><h2>3. Kavramsal anlatım: neden → nedir → nasıl</h2><h3>Neden?</h3><p>Bir kampanyanın leaderboard'ı sıralama ve rank ister; günlük aktif kullanıcı sayımı kesin listeyi değil yaklaşık sayıyı isteyebilir. Her iki problemi aynı Set ile çözmek gereksiz bellek harcatabilir.</p><h3>Nedir?</h3><p>Sorted Set üye+score tutar; Bitmap bit konumlarıyla boolean durumlar saklar; HyperLogLog yaklaşık benzersiz eleman sayar; GEO komutları konumsal arama sağlar; Stream kayıt kimlikli, append-only log ve consumer group/ack mekanizması sunar. Bunlar kullanım ihtiyaçlarına göre seçilir, birbirlerinin eşdeğeri değildir.</p><h3>Nasıl?</h3><p>ZADD/ZRANGE rank sorgusu; SETBIT/GETBIT bit pozisyonu; PFADD/PFCOUNT tahmini kardinalite; GEOADD/GEOSEARCH yakınlık; XADD/XREADGROUP/XACK mesaj akışı. Sürüm ve komut seçenekleri değişebileceği için eğitim imajı sürümünde CLI `HELP command` veya resmi komut referansıyla doğrulayın.</p><div class="expert"><b>UZMAN NOTU · Üretim, performans ve güvenlik</b><p>Sorted Set'te yüksek cardinality/çok sık rank sorgusu bellek ve CPU maliyeti yaratır. Bitmap ID aralığı seyrekse boş bitler pahalı olabilir. HyperLogLog'un standart hata oranı yaklaşık %0.81 olup sonuç yaklaşık değerdir; kesin faturalama/uygunluk için kullanmayın. Streams'te consumer group pending entry list (PEL), reclaim/claim, trimming ve retry politikası tasarlanmalıdır.</p></div></section>
+<section class="card" id="lab"><h2>4. Adım adım uygulama (Lab)</h2><p>Her checkbox sayfa içi ilerleme içindir; durum kaydedilmez. Komutları verilen sırayla uygulayın. Kod bloklarının sağ üstündeki <b>Kopyala</b> düğmesi içeriği panoya alır.</p>
+      <div class="step"><label><input type="checkbox"> <b>Windows/macOS · Terminal</b>: redis-cli açın.</label><pre><code>docker exec -it redis-lab redis-cli</code></pre></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · Sorted Set</b>: skor tablosu.</label><pre><code>ZADD lab:leaderboard 120 alice 95 bob 120 chris
+ZRANGE lab:leaderboard 0 -1 WITHSCORES
+ZREVRANK lab:leaderboard alice</code></pre><p>Üyeler skorla artan; aynı skordaki leksikografik bağ sırasını eğitim sürümünde gözleyin. Rank 0-based'tir ve tie sırası iş kuralı olmamalıdır.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · Bitmap</b>: günlük giriş bitlerini işaretleyin.</label><pre><code>SETBIT lab:attendance:day1 7 1
+SETBIT lab:attendance:day1 12 1
+GETBIT lab:attendance:day1 7
+BITCOUNT lab:attendance:day1</code></pre><p>GETBIT 1, BITCOUNT 2. Offset'ler 0'dan başlar; kullanıcı ID aralığının yoğunluğunu hesaplayın.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · HyperLogLog</b>: anonim distinct tahmini.</label><pre><code>PFADD lab:daily:visitors u1 u2 u1
+PFCOUNT lab:daily:visitors</code></pre><p>COUNT yaklaşık 2 döner (küçük örnekte çoğunlukla 2). Üyeleri geri getiremez.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · Geospatial</b>: koordinat sırası longitude latitude.</label><pre><code>GEOADD lab:shops 29.0 41.0 shop-a 29.1 41.05 shop-b
+GEOSEARCH lab:shops FROMLONLAT 29.0 41.0 BYRADIUS 20 km WITHDIST</code></pre><p>En az shop-a ve mesafesi görünür; shop-b aralık içinde olabilir. Koordinatlar örnektir, gerçek adres koordinatı değildir.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · Stream</b>: kayıt ekleyip okuyun.</label><pre><code>XADD lab:orders * order_id O-100 status created
+XADD lab:orders * order_id O-101 status created
+XRANGE lab:orders - +</code></pre><p>İki otomatik stream ID ve field/value kayıtları döner. Stream kaydı Pub/Sub gibi anlık teslimle yok olmaz.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI · Stream consumer group</b>: group oluşturup mesaj tüketin.</label><pre><code>XGROUP CREATE lab:orders fulfillment 0 MKSTREAM
+XREADGROUP GROUP fulfillment worker-1 COUNT 2 STREAMS lab:orders &gt;
+XACK lab:orders fulfillment &lt;ilk-mesaj-id&gt;</code></pre><p>İlk `XREADGROUP` çıktısından ilk ID'yi kopyalayıp placeholder ile değiştirin. `XACK` integer 1 döndürür. Consumer group mesajları otomatik ack etmez; başarısız consumer PEL incelemesi gerekir.</p></div>
+      <div class="step"><label><input type="checkbox"> <b>Redis CLI</b>: lab key'lerini temizleyin.</label><pre><code>DEL lab:leaderboard lab:attendance:day1 lab:daily:visitors lab:shops lab:orders
+QUIT</code></pre></div></section>
+<section class="card" id="beklenen"><h2>5. Beklenen çıktılar</h2><p>Leaderboard skor/rank döndürür; bitmap count 2; PFCOUNT yaklaşık 2; GEOSEARCH yakın mağazayı; Stream XRANGE kayıtları ve XREADGROUP mesajları gösterir.</p></section>
+<section class="card errorbox" id="hatalar"><h2>6. Sık karşılaşılan hatalar ve çözümleri</h2><table><thead><tr><th>Hata mesajı (örnek)</th><th>Neden</th><th>Çözüm</th></tr></thead><tbody><tr><td><code>ERR unknown command 'GEOSEARCH'</code></td><td>Redis sürümü eski veya komut desteklenmiyor.</td><td>Kullanılan imaj sürümünü doğrulayın ve lab imajını desteklenen sabit sürüme güncelleyin; komut referansına bakın.</td></tr><tr><td><code>BUSYGROUP Consumer Group name already exists</code></td><td>Group daha önce oluşturulmuş.</td><td>Bu normal tekrar çalıştırma durumudur; `XINFO GROUPS lab:orders` ile doğrulayın veya lab key'ini temizleyip baştan başlayın.</td></tr><tr><td><code>NOGROUP No such key or consumer group</code></td><td>Stream/group adı yanlış veya group henüz oluşturulmadı.</td><td>Key ve group adını birebir doğrulayın; `XGROUP CREATE ... MKSTREAM` uygulayın.</td></tr><tr><td><code>ERR value is not an integer or out of range</code></td><td>Bitmap offset/range geçersiz.</td><td>Offset'i non-negative integer ve value'yu 0/1 yapın.</td></tr></tbody></table></section>
+<section class="card" id="alistirma"><h2>7. Mini alıştırmalar</h2><h3>Kolay</h3><p>Kesin üyeleri saklamadan benzersiz sayıyı yaklaşık veren yapı hangisi?</p><h3>Orta</h3><p>Stream consumer group mesajı işlediğini nasıl bildirir?</p><h3>Zor</h3><p>Günlük 100 milyon kullanıcı ID'si seyrek ve geniş aralıkta. Bitmap seçmeden önce neyi ölçersiniz?</p><details><summary><b>Cevap anahtarını aç/kapat</b></summary><ol><li>HyperLogLog.</li><li>`XACK stream group message-id` ile; aksi halde pending list'te kalır.</li><li>ID aralığının yoğunluğu ve bitset memory'si; seyrek dağılımda Bitmap verimsiz olabilir. Set/HLL veya parçalı bitmap'i ölçüp doğruluk gereksinimine göre seçin.</li></ol></details></section>
+<section class="card" id="ozet"><h2>8. Özet ve kontrol listesi</h2><ul class="checklist"><li><label><input type="checkbox"> ZSET leaderboard sıralaması</label></li><li><label><input type="checkbox"> Bitmap bit/count</label></li><li><label><input type="checkbox"> HLL yaklaşık cardinality</label></li><li><label><input type="checkbox"> GEO koordinat sırası</label></li><li><label><input type="checkbox"> Stream group ve ack denendi</label></li></ul><p><b>Bir sonraki sayfa:</b> <a href="06-ileri-islemler.html">06. Advanced Redis Operations</a></p></section>
+<nav class="pager" aria-label="Önceki ve sonraki sayfa"><a href="04-veri-yapilari-1.html">← 04. Veri yapıları I</a><a href="06-ileri-islemler.html">06. İleri işlemler →</a></nav>
+<p class="footer">Redis eğitimi · Kurum içi kullanım için · Komut ve arayüz adları kurulu sürümde doğrulanmalıdır.</p>
+</main></div>
+<script>
+document.querySelectorAll("pre").forEach((pre) => {
+  const code = pre.querySelector("code");
+  const sample = (code?.innerText ?? "").trim();
+  const label = document.createElement("span"); label.className = "lang";
+  label.textContent = /^(from |import )/.test(sample) ? "PYTHON"
+    : /^(services:|x-redis-node:)/.test(sample) ? "YAML"
+    : /^redis==/.test(sample) ? "REQUIREMENTS"
+    : /^(port d+|appendonly |dir )/.test(sample) ? "REDIS CONF"
+    : /^(docker |docker$|wsl |brew |python |python3 |py |cd |uname |Set-ExecutionPolicy)/.test(sample) ? "SHELL"
+    : "REDIS CLI";
+  label.setAttribute("aria-hidden", "true");
+  const button = document.createElement("button"); button.className = "copy"; button.type = "button"; button.textContent = "Kopyala";
+  button.setAttribute("aria-label", "Kod bloğunu kopyala");
+  button.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(code?.innerText ?? ""); button.textContent = "Kopyalandı"; setTimeout(() => button.textContent = "Kopyala", 1400); }
+    catch { button.textContent = "Kopyalama başarısız"; setTimeout(() => button.textContent = "Kopyala", 1800); }
+  });
+  pre.append(label, button);
+});
+document.querySelectorAll(".tabs").forEach((tabs) => {
+  const buttons = [...tabs.querySelectorAll(".tab")], panels = [...tabs.querySelectorAll(".tab-panel")];
+  buttons.forEach((button, index) => {
+    const selected = button.classList.contains("active");
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(selected));
+    button.setAttribute("aria-controls", "tab-panel-" + index);
+    button.tabIndex = selected ? 0 : -1;
+    panels[index]?.setAttribute("id", "tab-panel-" + index);
+    panels[index]?.setAttribute("role", "tabpanel");
+    if (panels[index]) panels[index].hidden = !selected;
+  });
+  buttons.forEach((button) => button.addEventListener("click", () => {
+    const name = button.dataset.tab;
+    buttons.forEach((item) => {
+      const selected = item === button;
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-selected", String(selected));
+      item.tabIndex = selected ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const selected = panel.dataset.panel === name;
+      panel.classList.toggle("active", selected);
+      panel.hidden = !selected;
+    });
+  }));
+});
+</script>
+</body></html>
