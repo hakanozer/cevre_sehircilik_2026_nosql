@@ -5,7 +5,28 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Threading.RateLimiting;
 
+using StackExchange.Redis;
+
 var builder = WebApplication.CreateBuilder(args);
+
+// IDistributedCache registration
+var redisConnection =
+    builder.Configuration["Redis:ConnectionString"]
+    ?? throw new InvalidOperationException(
+        "Redis:ConnectionString configuration is missing.");
+
+// Register exactly one multiplexer per application process.
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    var options = ConfigurationOptions.Parse(redisConnection);
+
+    options.AbortOnConnectFail = false;
+    options.ConnectRetry = 3;
+    options.ConnectTimeout = 5000;
+    options.SyncTimeout = 5000;
+
+    return ConnectionMultiplexer.Connect(options);
+});       
 
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>
@@ -79,7 +100,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ErrorHandlerMiddleware>();
 app.UseMiddleware<GlobalMiddleware>();
-app.UseRateLimiter();
+// app.UseRateLimiter();
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
