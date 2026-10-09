@@ -1,0 +1,3 @@
+// Tablo Yaratma - Migrations Oluşturma
+dotnet ef migrations add v1
+dotnet ef database update 
