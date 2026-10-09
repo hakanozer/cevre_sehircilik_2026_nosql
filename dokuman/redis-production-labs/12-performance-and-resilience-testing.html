@@ -1,0 +1,116 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>12 · Performance and Resilience Testing</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 12 / 12</span><span class="badge">İleri</span><span class="badge">70 dakika</span></p><h1>Performance &amp; Resilience Testing</h1><p>Ölçmeden hızlanma iddiası üretmeyin; cache hit/miss, outage ve tail latency’yi kıyaslayın.</p><span class="tag">Mevcut projeden doğrulandı: GET api/product · middleware · docker-compose</span></header>
+<section class="card"><h2>A · Problem / B · Ölçümün rolü</h2><p>Redis cache hit’in latency’yi azalttığı varsayımı ancak gerçek workload ölçümüyle kanıtlanır. DB cache warm/cold farkı, Redis network, serializer, request logs, auth ve rate limit sonucu etkiler. Çok kısa benchmark p50’yi gösterip p95/p99 ve hata oranını saklayabilir. SQLite tek dosya multi-instance writes için sınırlı; gerçek deployment benzer topolojiyle test edilmeli. Mevcut <code>GET api/product</code> cache’li kıyas için uygundur; Redis disabled mode mevcut değildir (önerilen test toggle/mod). Testte cache reset, warm-up ve rate limiter durumu sabitlenmeli.</p><h2>C · Ölçülecek sinyaller</h2><div class="cols"><div class="box"><b>HTTP:</b> throughput, p50/p95/p99 latency, status/error rate.</div><div class="box"><b>Cache:</b> hit/miss ratio, serialization, cache fill concurrency.</div><div class="box"><b>Redis:</b> command latency, connected clients, memory/eviction, timeout.</div><div class="box"><b>DB:</b> SQLite query count, lock/busy errors, CPU/IO.</div></div><table><tr><th>Key / metric</th><th>Tip/scope</th><th>TTL / yorum</th></tr><tr><td><code>products:all</code></td><td>String JSON, global GET api/product</td><td>Current TTL=10m. Flush/warm deliberately; current code has no cache hit metric.</td></tr><tr><td><code>test:run:{runId}:*</code></td><td>Optional test-only keys</td><td>Short TTL and isolated test dataset; never load-test production-like shared keys uncontrollably.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint + test design</h2><p>Primary endpoint <code>GET api/product</code> is <span class="tag">Mevcut</span>, class-level Product role required; Product List Postman request shows no token setup, a mismatch. Data mutation routes are real but changing shared dataset invalidates cache. Cache-off comparison needs proposed flag or separate test implementation; not an existing endpoint. Rate limiter in Program.cs currently passive; enabling it enforces 1 req/sec and invalidates load test throughput. ErrorHandlerMiddleware prints every header; GlobalMiddleware logs every request—console I/O contaminates benchmark results. Log safely and consistently for both test runs.</p><div class="scroll"><table><tr><th>Metot / URL</th><th>Expected test result</th><th>Redis / DB</th></tr><tr><td>GET <code>api/product</code> warm cache</td><td>200 array; measure p95/p99, errors</td><td>GET products:all hit, expect no SQLite fetch on hit (verify DB instrumentation).</td></tr><tr><td>GET <code>api/product</code> cold/miss</td><td>200 array; record fill latency and DB query</td><td>DEL key then concurrent reads; stampede query count.</td></tr><tr><td>POST/PUT/DELETE <code>api/product</code></td><td>200/404; run only isolated dataset</td><td>SQLite write; Create deletes before save; Update/Delete no invalidation in current code.</td></tr></table></div><p>No invented benchmark numbers: record results under same hardware/container, dataset, concurrency, test duration, warm-up and auth conditions.</p></section>
+<section class="card"><h2>E · Step-by-step lab</h2><ol><li>Use k6/JMeter from an authorized local environment; constant virtual users/rate, warmup and fixed test window; protect API from uncontrolled overload.</li><li>Run cache warm scenario, then controlled miss; test stampede burst separately. Clear key between runs and verify TTL.</li><li>Test Redis outage/timeout and recovery. Record actual status; current GET returns middleware 500, not DB fallback. Watch SQLite load.</li><li>Repeat with cache bypass proposed flag only after implementing separately; compare paired runs, not incomparable cold/warm samples.</li><li>Observe Redis server; docker-compose has no maxmemory/eviction config. Proposed isolated experiment may start Redis with explicit maxmemory and policy after reviewing container version/semantics.</li></ol><section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Benchmark endpoint mevcut değil; actual cache target remains existing <code>ProductController.GetAll</code>. Add an authenticated Redis probe for dependency latency, and exercise the actual product endpoint under controlled local load. No invented test results.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, Redis multiplexer and SQLite are registered; no test project is present. Existing Product GET requires Product role and Redis failure currently reaches error middleware. Don’t benchmark with rate limiter enabled unless testing that limit; current middleware has passive limiter configuration.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Compare warm-cache and cold-cache runs without matching hardware, auth, duration, dataset and request rate.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Mevcut projeden doğrulandı:</b> Performance probe reads/writes only a short-lived unique Redis key; no entity, DbSet or migration is needed. Existing product cache already uses SQLite-backed Product records.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Test instrumentation writing synthetic products into the shared production dataset.</p>
+<h3>3. DTO</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/RedisProbeResultDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Models.Dto;
+public sealed record RedisProbeResultDto(
+    long PingMilliseconds, long RoundTripMilliseconds, bool ReadWriteDeleteSucceeded);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Returning endpoints, credentials, connection string or raw Redis errors in diagnostic JSON.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/RedisProbeKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+namespace RestApi.Services;
+public static class RedisProbeKeys
+{
+    public static string Probe(Guid id) =&gt; $"diagnostics:redis:probe:{id:N}";
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Fixed shared probe key causing concurrent probes to overwrite each other. Use a unique nonce and short expiry.</p>
+<h3>5. Servis</h3><p><b>Dosya yolu: <code>RestApi/Services/IRedisDiagnostics.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+namespace RestApi.Services;
+public interface IRedisDiagnostics
+{
+    Task&lt;RedisProbeResultDto&gt; ProbeAsync(CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/RedisDiagnostics.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class RedisDiagnostics(IConnectionMultiplexer multiplexer) : IRedisDiagnostics
+{
+    private readonly IDatabase _db = multiplexer.GetDatabase();
+    public async Task&lt;RedisProbeResultDto&gt; ProbeAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var pingWatch = Stopwatch.StartNew();
+        await _db.PingAsync();
+        pingWatch.Stop();
+        var key = (RedisKey)RedisProbeKeys.Probe(Guid.NewGuid());
+        var roundTrip = Stopwatch.StartNew();
+        await _db.StringSetAsync(key, "ok", TimeSpan.FromSeconds(10));
+        var value = await _db.StringGetAsync(key);
+        var deleted = await _db.KeyDeleteAsync(key);
+        roundTrip.Stop();
+        return new RedisProbeResultDto(pingWatch.ElapsedMilliseconds,
+            roundTrip.ElapsedMilliseconds, value == "ok" &amp;&amp; deleted);
+    }
+}</code></pre><p>Redis exceptions propagate; the API maps them to 503. Probe latency is one sample, not a percentile or benchmark. Do not expose broad <code>INFO</code>/<code>CONFIG</code> endpoints.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Treating one ping as p95 latency. Gather distributions from repeated authorized load tests.</p>
+<h3>6. Program.cs</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing service registrations after DbContext · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IRedisDiagnostics, RedisDiagnostics&gt;();</code></pre><p>No middleware change; do not enable rate limiting accidentally if comparing throughput.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Diagnostic endpoint’in herkese açılması. Keep authenticated and disable/remove it in production if not operationally approved.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/RedisDiagnosticsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Services;
+using StackExchange.Redis;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/diagnostics/redis")]
+[Authorize(Roles = "Product")]
+public sealed class RedisDiagnosticsController(IRedisDiagnostics diagnostics) : ControllerBase
+{
+    [HttpGet]
+    public async Task&lt;IActionResult&gt; Probe(CancellationToken ct)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0) return Unauthorized();
+        try { return Ok(await diagnostics.ProbeAsync(ct)); }
+        catch (RedisException) { return StatusCode(503); }
+    }
+}</code></pre><p>GET returns 200 timings, anonymous 401, no Product role 403, Redis unavailable 503. Timings are for an individual probe; product performance is measured against existing GET.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Reporting Redis timing as end-to-end API latency or omitting the route’s role requirement.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · acquire bearer token using existing login</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · probe and actual API checks</b></p><pre><button class="copy">Kopyala</button><code>curl -i http://localhost:5120/api/diagnostics/redis \
+  -H "Authorization: Bearer $TOKEN"
+curl -sS -w '\nHTTP %{http_code} total=%{time_total}s\n' \
+  http://localhost:5120/api/product -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli TTL products:all
+docker exec -it redis-lab redis-cli INFO stats
+unset TOKEN LOGIN_USER</code></pre><p>Probe should return non-negative timing values and <code>readWriteDeleteSucceeded:true</code> (millisecond resolution may show zero). Product GET returns 200 when token has Product role; existing current cache key TTL is at most 600 seconds. For reproducible load tests, install/use k6 separately and record hardware, dataset, warmup, VUs/rate, duration, p95/p99/error rate and SQLite query count; clear the key only between controlled runs.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Uncontrolled requests against shared API or real data. Run local/isolated load only and cap traffic.</p>
+<h3>9. Test project (opsiyonel)</h3><p><b>Dosya/konum: Terminal · repository root</b></p><pre><button class="copy">Kopyala</button><code>dotnet new xunit -n RestApi.Tests -o RestApi.Tests
+dotnet sln RestApi.sln add RestApi.Tests/RestApi.Tests.csproj
+dotnet add RestApi.Tests/RestApi.Tests.csproj reference RestApi/RestApi.csproj
+dotnet add RestApi.Tests/RestApi.Tests.csproj package Microsoft.AspNetCore.Mvc.Testing --version 9.0.2
+dotnet test RestApi.Tests/RestApi.Tests.csproj</code></pre><p>Use integration tests with isolated SQLite/Redis containers for cache hit/miss, Redis outage, recovery, and authorization. Do not add synthetic benchmark numbers to documentation; save raw run parameters/results with the test report.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Running resilience tests against shared developer/production Redis. Use isolated services and clean only test-prefixed keys.</p>
+<h3>10. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Probe route is authenticated and returns no connection secrets.</label></li><li><label><input type="checkbox">Actual Product GET tested warm, cold and Redis outage.</label></li><li><label><input type="checkbox">Load test has bounded rate and reproducible conditions.</label></li><li><label><input type="checkbox">Results report measured values only.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+INFO memory
+INFO stats
+LATENCY LATEST
+SLOWLOG GET 10
+TTL products:all
+SCAN 0 MATCH products:* COUNT 100</code></pre><p>Commands inspect Redis only; do not infer HTTP performance from Redis command timing alone. `SLOWLOG`/LATENCY output depends on server settings and load.</p><h3>Sample k6 scenario (external tool, not bundled)</h3><pre><button class="copy">Kopyala</button><code>import http from 'k6/http';
+import { check } from 'k6';
+export const options = { vus: 10, duration: '30s' };
+export default function () {
+  const r = http.get(__ENV.BASE_URL + '/api/product', {
+    headers: { Authorization: `Bearer ${__ENV.TEST_TOKEN}` },
+  });
+  check(r, { 'status 200': x =&gt; x.status === 200 });
+}</code></pre><p>Use a disposable least-privilege test credential via environment/secret injection; never embed a real token in the HTML or script. Numbers intentionally absent.</p></section>
+<section class="card"><h2>F · Request flow / success &amp; failure</h2><div class="flow">HTTP → ErrorHandlerMiddleware (Console all headers) → GlobalMiddleware (Console each request) → Authentication → Authorization(Product) → ProductController → Redis GET → SQLite on miss → Redis SET → response</div><div class="cols"><div class="box"><b>Success:</b> warm key yields 200; hit ratio and tail latency measured alongside DB query count.</div><div class="box"><b>Failure:</b> Redis stopped → uncaught Redis exception reaches ErrorHandlerMiddleware → 500 JSON with exception.Message. Test restoration and cold-cache surge.</div></div><h2>G · Production considerations</h2><ul><li>Console writes per request and header dump skew latency and risk bearer token disclosure; test logger configuration safe and equal across scenarios.</li><li>Program.cs built-in rate limiter is configured but commented middleware means currently inactive. If enabled with 1 req/sec, it dominates test results. Check state before each run.</li><li>ConnectTimeout/SyncTimeout=5000ms can contribute delays; measure async calls and timeout distribution. Do not assume setting means every request waits exactly 5 seconds.</li><li>No maxmemory/eviction policy in compose. Eviction experiment requires isolated config and observations of evicted_keys, memory, hit ratio.</li><li>Reconnect/recovery, cold-start stampede, client retries and SQLite locking are resilience conditions.</li><li>Redis durability AOF enabled in compose; image version tag existence unverified. Don’t claim version-specific behavior.</li></ul><p>Outcomes: p95/p99, throughput, cache hit ratio, latency/error correlation, fault injection and measurement discipline. Prerequisite Module 11 cache/outage.</p><h2>Result sheet · fill with measured values</h2><div class="scroll"><table><tr><th>Scenario</th><th>Requests / sec</th><th>p50</th><th>p95</th><th>p99</th><th>Error %</th><th>Cache hit %</th><th>SQLite reads</th></tr><tr><td>Warm Redis cache</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>Cold cache / burst</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>Redis unavailable</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>Cache disabled (proposed)</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr></table></div><h2>H · Tasks / checklist</h2><ol><li>Prepare reproducible warm-cache test. <details><summary>İpucu</summary>Record commit, environment, warm-up, auth, rate limiter status.</details></li><li>Compare cold burst with Redis warm. <details><summary>İpucu</summary>Count DB SELECTs, not just HTTP duration.</details></li><li>Stop Redis then restore; inspect errors/DB overload. <details><summary>İpucu</summary>Current code has no fallback; observe exact 500 and recovery surge.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">Test environment/data isolated, token injected securely.</label></li><li><label><input type="checkbox">Rate limiter, console logging and cache state recorded.</label></li><li><label><input type="checkbox">p95/p99, errors, Redis and SQLite metrics collected.</label></li><li><label><input type="checkbox">No claimed performance gain without measurements.</label></li><li><label><input type="checkbox">Memory/eviction and outage/recovery scenarios tested.</label></li></ul><details><summary>Kendini değerlendir</summary><p>1) Warm cache proves cold behavior? No. 2) Why p99? Tail user impact. 3) Rate limiter effect? 1 req/sec if middleware enabled; currently passive. 4) Current Redis outage? 500, no SQLite fallback. 5) Can quote speedup without measurement? No.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Compare warm cache to cold DB without matching setup → paired controlled scenarios.</li><li>Ignore logging/rate limiting → record and normalize these confounders.</li><li>Report average only → p95/p99 and errors.</li><li>Use production token or load → isolated credentials/data and approved load envelope.</li></ul></section>
+<section class="card"><h2>.NET örneği · gözlemlenebilirlik (Önerilen geliştirme)</h2><p>Mevcut projede ILogger/metrik enstrümantasyonu görünmüyor. Bu örnek Redis çağrı süresini ölçer; ürün listesini veya hassas header/token değerlerini loglamaz. Yerleşim önerisi: ProductController ya da yeni Services/ProductCacheMetrics.cs.</p><pre><button class="copy">Kopyala</button><code>var started = Stopwatch.GetTimestamp();
+var cached = await _redis.GetDatabase().StringGetAsync("products:all");
+var elapsed = Stopwatch.GetElapsedTime(started);
+_logger.LogInformation(
+    "Product cache lookup completed. Hit={CacheHit} ElapsedMs={ElapsedMs}",
+    cached.HasValue, elapsed.TotalMilliseconds);
+// DI: controller already receives IConnectionMultiplexer;
+// inject ILogger&lt;ProductController&gt; for this proposed measurement.
+// Aggregate counters/histograms in a metrics backend for p95/p99.</code></pre><p>Snippet is a measurement illustration. Do not emit raw product payload, JWT, Authorization header, username or secret values. Avoid per-request Console logging in timed benchmark.</p></section>
+<nav class="pager"><a href="11-cache-stampede-and-redis-outage.html">← Önceki: Cache Stampede</a><a href="index.html">Ana sayfa →</a></nav><footer class="footer">Performans sonuçları ölçülmeden ileri sürülmez; tablo boş bırakılmıştır.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

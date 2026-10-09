@@ -1,0 +1,173 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>08 · Background Jobs and Streams</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 08 / 12</span><span class="badge">İleri</span><span class="badge">65 dakika</span></p><h1>Background Jobs &amp; Redis Streams</h1><p>Uzun HTTP işini producer/consumer hattına ayırın; pending/ack ve retry’ı doğru yönetin.</p><span class="proposal">Önerilen geliştirme · BackgroundService/worker mevcut değil</span></header>
+<section class="card"><h2>A · Problem / B · Redis rolü</h2><p>Rapor, toplu bildirim veya cache warm-up HTTP isteğinde çalışırsa latency/timeouts artar; client retry duplicate side effect üretebilir. In-memory queue process restart’ta kaybolur. Redis Stream kayıtlı event, consumer group dağıtımı ve pending entry takibi sağlar. List basit FIFO pop’dur; visibility/consumer ownership yönetimi kendin gerekir. Stream’in retention/persistence ve failover garantileri deployment’a bağlı; exactly-once delivery yoktur. SQLite job table is durable option; database/Redis cross-transaction/outbox tasarlanmalı. Product cache refresh gerçek örnek; worker mevcut değil. SQLite tek dosya multi-instance writes için sınırlı.</p><h2>C · Stream özellikleri</h2><div class="cols"><div class="box"><b>XADD:</b> event append, generated ID.</div><div class="box"><b>Consumer group:</b> XREADGROUP partitioned work.</div><div class="box"><b>Pending + XACK:</b> worker aldı ama ack etmedi; claim/retry/recovery gerekir.</div><div class="box"><b>Dead-letter:</b> retry limit sonrası ayrı stream/kalıcı tablo; error detail sanitize.</div></div><table><tr><th>Key</th><th>Tip</th><th>Retention / scope</th></tr><tr><td><code>jobs:stream:maintenance</code></td><td>Stream: taskId/type/payload</td><td>Shared worker queue; maxlen/trim policy, pending tracking and durable DB job record when needed. TTL usually not used for entire stream key.</td></tr><tr><td><code>jobs:status:{jobId}</code></td><td>Hash status / attempts</td><td>TTL aligned to UX retention; job history authoritative SQLite if required.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Tüm job routes <b>Önerilen geliştirme</b>; Product routes mevcut, Product role controller-level. New maintenance role/policy not present.</p><div class="scroll"><table><tr><th>Metot/URL</th><th>İstek / yanıt / hata</th><th>Redis / SQLite</th></tr><tr><td>POST <code>api/maintenance/cache-refresh</code></td><td><code>{"productId":12}</code> → 202 <code>{"jobId":"..."}</code>; 400/403/503.</td><td>XADD event; optional SQLite durable Job row.</td></tr><tr><td>GET <code>api/jobs/{jobId}</code></td><td>→ 200 <code>{"state":"pending"}</code>; 404.</td><td>Hash status or SQLite authoritative status.</td></tr><tr><td>POST <code>api/jobs/{jobId}/retry</code></td><td>Authorized operator → 202; 409 if active; 403.</td><td>Re-enqueue idempotent job; DB job status transition.</td></tr></table></div></section>
+<section class="card"><h2>E · Uygulama adımları</h2><ol><li>Define typed event and idempotency/job ID; API returns 202 quickly.</li><li>Add Stream consumer group and worker as BackgroundService; for scoped ApplicationDbContext use IServiceScopeFactory per message (DbContext is scoped). Multiplexer remains singleton.</li><li>Process then persist result, XACK after successful durable effect; if crash between effect and ack, same event may run again—handler idempotency required.</li><li>Implement pending claim/retry/backoff/dead-letter, poison message alert, retention and graceful cancellation. Consider broker if routing/delivery/operations outgrow Redis Streams.</li></ol>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Mevcut projede worker/job queue yok. Bu bounded demo Redis Stream’e enqueue eder ve local echo job’ını işler; durable business workflow değildir.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, StackExchange.Redis 3.3.1 and singleton multiplexer exist. No package required; compose enables AOF, but has no retention/maxmemory/backup policy.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> AOF exactly-once execution sağlar sanmak. Side effect sonrası ACK öncesi crash olursa job tekrar işlenebilir; handler idempotent olmalı.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Mevcut projeden doğrulandı:</b> Bu demonstrasyon Redis stream’i kullanır; SQLite entity/DbSet/migration gerekmez. Business change ile job’ın atomik oluşması gerekiyorsa SQL outbox ekleyip aynı DB transaction’ında yazın.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis-only queue’yu dayanıklı iş kaydı saymak. Production’da AOF, backup, trim, pending claim ve recovery plan gerekir.</p>
+<h3>3. DTO</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/QueueJobDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models.Dto;
+public sealed class QueueJobDto
+{
+    [Required, RegularExpression("^[a-z0-9-]{1,40}$")]
+    public string Type { get; init; } = string.Empty;
+    [Required, StringLength(1000)]
+    public string Payload { get; init; } = string.Empty;
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Unbounded/unknown payload enqueue etmek; allow-list type and enforce payload size.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/JobStreamKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Services;
+public static class JobStreamKeys
+{
+    public const string Stream = "jobs:stream:v1";
+    public const string Group = "jobs-workers";
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Consumer group’ları versioning olmadan rename/trim etmek; pending messages operationally strand olabilir.</p>
+<h3>5. Servis ve worker</h3><p><b>Dosya yolu: <code>RestApi/Services/IJobQueue.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+namespace RestApi.Services;
+public interface IJobQueue
+{
+    Task&lt;string&gt; EnqueueAsync(int userId, QueueJobDto job, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/RedisJobQueue.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class RedisJobQueue(IConnectionMultiplexer multiplexer) : IJobQueue
+{
+    private readonly IDatabase _db = multiplexer.GetDatabase();
+    public async Task&lt;string&gt; EnqueueAsync(int userId, QueueJobDto job, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var id = await _db.StreamAddAsync(JobStreamKeys.Stream, new[]
+        {
+            new NameValueEntry("ownerId", userId),
+            new NameValueEntry("type", job.Type),
+            new NameValueEntry("payload", job.Payload)
+        });
+        return id.ToString();
+    }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/JobStreamWorker.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class JobStreamWorker(
+    IConnectionMultiplexer multiplexer, ILogger&lt;JobStreamWorker&gt; logger)
+    : BackgroundService
+{
+    private readonly IDatabase _db = multiplexer.GetDatabase();
+    private readonly string _consumer = $"{Environment.MachineName}-{Guid.NewGuid():N}";
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var groupReady = false;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (!groupReady)
+                {
+                    try
+                    {
+                        await _db.StreamCreateConsumerGroupAsync(
+                            JobStreamKeys.Stream, JobStreamKeys.Group, "0-0", true);
+                    }
+                    catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP")) { }
+                    groupReady = true;
+                }
+
+                var entries = await _db.StreamReadGroupAsync(
+                    JobStreamKeys.Stream, JobStreamKeys.Group, _consumer, "&gt;", 10);
+                foreach (var entry in entries)
+                {
+                    stoppingToken.ThrowIfCancellationRequested();
+                    var type = entry.Values.FirstOrDefault(v =&gt; v.Name == "type").Value;
+                    var payload = entry.Values.FirstOrDefault(v =&gt; v.Name == "payload").Value;
+                    if (type == "echo")
+                    {
+                        logger.LogInformation("Processed demo job {JobId}; payload length {PayloadLength}",
+                            entry.Id, payload.ToString().Length);
+                        await _db.StreamAcknowledgeAsync(
+                            JobStreamKeys.Stream, JobStreamKeys.Group, entry.Id);
+                    }
+                    else logger.LogError("Unsupported job type {JobType}, message {JobId} left pending",
+                        type.ToString(), entry.Id);
+                }
+                if (entries.Length == 0)
+                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+            }
+            catch (RedisException ex)
+            {
+                groupReady = false;
+                logger.LogError(ex, "Redis stream unavailable; worker will retry.");
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
+        }
+    }
+}</code></pre><p>Unknown types remain pending; production must add XAUTOCLAIM, retry limits, dead-letter handling and alerts. Worker does not persist job status or make side effects; it demonstrates group read + ack mechanics.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Exception’ı sessizce yutup worker’ı sağlıklı göstermek. This worker logs outage and retries; monitor pending count.</p>
+<h3>6. Program.cs — DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing service registrations after DbContext · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddSingleton&lt;IJobQueue, RedisJobQueue&gt;();
+builder.Services.AddHostedService&lt;JobStreamWorker&gt;();</code></pre><p>Hosted worker is singleton and has no scoped DbContext. Add IServiceScopeFactory per message if future processing needs scoped services; middleware unchanged.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Scoped DbContext’i singleton BackgroundService’e doğrudan enjekte etmek.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/JobsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/jobs")]
+[Authorize]
+public sealed class JobsController(IJobQueue queue) : ControllerBase
+{
+    [HttpPost]
+    public async Task&lt;IActionResult&gt; Enqueue(QueueJobDto request, CancellationToken ct)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0) return Unauthorized();
+        try { return Accepted(new { id = await queue.EnqueueAsync(userId, request, ct), status = "queued" }); }
+        catch (RedisException) { return StatusCode(503); }
+    }
+}</code></pre><p>POST 202 means queued, invalid DTO 400, anonymous 401, Redis failure 503. No completion/status endpoint is claimed.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> 202 Accepted’i business operation completed gibi sunmak.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · token existing login ile alınır</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen API validation</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/jobs \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"type":"echo","payload":"hello from lab"}'
+docker exec -it redis-lab redis-cli XINFO GROUPS jobs:stream:v1
+docker exec -it redis-lab redis-cli XPENDING jobs:stream:v1 jobs-workers
+unset TOKEN LOGIN_USER</code></pre><p>Expected 202 with stream ID; worker logs Processed demo job; after ACK pending count is 0. Redis outage returns 503 from API. Check deployment’s AOF persistence separately.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Worker log as durable audit. Persist status in a database if consumers need job history.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Consumer group receives/acks handled messages.</label></li><li><label><input type="checkbox">Unknown types remain observable pending.</label></li><li><label><input type="checkbox">No scoped dependency captured by hosted singleton.</label></li><li><label><input type="checkbox">Production side effects have idempotency/outbox plan.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+XADD jobs:stream:maintenance * type refresh-cache jobId j-101 productId 12
+XGROUP CREATE jobs:stream:maintenance maintenance-group 0 MKSTREAM
+XREADGROUP GROUP maintenance-group worker-a COUNT 1 BLOCK 1000 STREAMS jobs:stream:maintenance &gt;
+XPENDING jobs:stream:maintenance maintenance-group
+XACK jobs:stream:maintenance maintenance-group 1780000000000-0</code></pre><p>Use returned stream ID from XREADGROUP when acking. Acknowledge after side effect is durably completed, and handle duplicate execution.</p><h3>.NET worker shape</h3><pre><button class="copy">Kopyala</button><code>public sealed class MaintenanceWorker(
+    IConnectionMultiplexer mux, IServiceScopeFactory scopeFactory)
+    : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            // Read one message from the consumer group first.
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService&lt;ApplicationDbContext&gt;();
+            var redis = mux.GetDatabase();
+            // Process idempotently with this message-scoped DbContext,
+            // then acknowledge only after durable work succeeds.
+            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+        }
+    }
+}</code></pre><p>This skeleton shows lifetimes only; blocking read loop, pending reclaim, cancellation and error handling still required. BackgroundService is proposed, not current.</p></section>
+<section class="card"><h2>F · Akış ve production</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → JobController → XADD → BackgroundService → IServiceScopeFactory → SQLite/Redis → XACK</div><div class="cols"><div class="box"><b>Success:</b> accepted event → worker reads → idempotent DB/cache operation → ack.</div><div class="box"><b>Failure:</b> worker crashes after DB commit but before ack → pending reclaim and duplicate safe processing.</div></div><ul><li>Consumer group pending entries need monitoring and reclaim. Stuck worker recovery.</li><li>Redis Streams persistence is deployment-dependent; AOF in compose is configured, but not a substitute for backups/delivery SLA.</li><li>Trim can remove entries workers still need; use carefully.</li><li>Redis+SQLite is not distributed transaction. Transactional outbox or reconciliation for DB-originated events.</li><li>Exactly-once not supplied by Streams alone. For advanced routing, long retention or managed guarantees, use a dedicated broker.</li></ul><p>Outcomes: producer/consumer, ack, pending, retry, idempotent worker. Prerequisite Mod 09 idempotency recommended.</p><h2>Tasks / checklist</h2><ol><li>Queue product cache refresh. <details><summary>İpucu</summary>Publish stable job ID and product ID.</details></li><li>Implement scoped DbContext use. <details><summary>İpucu</summary>Create async DI scope for each message.</details></li><li>Crash before ack and recover. <details><summary>İpucu</summary>Inspect XPENDING; reclaim and deduplicate durable effect.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">Worker/DbContext lifetime doğru mu?</label></li><li><label><input type="checkbox">Ack sonrası değil, durable effect sonrası mı?</label></li><li><label><input type="checkbox">Pending/retry/dead-letter ve retention tanımlı mı?</label></li><li><label><input type="checkbox">Exactly-once iddiası yok mu?</label></li></ul><details><summary>Kendini değerlendir</summary><p>1) List vs Stream? Stream group/pending metadata sağlar. 2) Ack ne demektir? Consumer işi tamamlandı diye bildirir; app effect’i atomik yapmaz. 3) Crash sonrası? Duplicate/reclaim. 4) DbContext nasıl resolve edilir? IServiceScopeFactory.</p></details><h3>Sık yapılan hatalar</h3><ul><li>HTTP action içinde uzun işi çalıştırmak → 202 + job queue.</li><li>Önce XACK edip sonra DB yazmak → iş kaybı riski.</li><li>Stream’den exactly-once beklemek → idempotent handler, DB constraints.</li></ul></section>
+<nav class="pager"><a href="07-feature-flags.html">← Önceki: Feature Flags</a><a href="09-idempotency.html">Sonraki: Idempotency →</a></nav><footer class="footer">Worker ve job API öneridir.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

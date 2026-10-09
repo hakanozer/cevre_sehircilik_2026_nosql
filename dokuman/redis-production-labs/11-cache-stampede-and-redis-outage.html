@@ -1,0 +1,164 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>11 · Cache Stampede and Redis Outage</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00;--red:#a52a2a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 11 / 12</span><span class="badge">İleri</span><span class="badge">65 dakika</span></p><h1>Cache Stampede &amp; Redis Outage</h1><p>Mevcut cache-aside akışını okuyun; stale data, cold cache ve Redis kesintisine yönelik düzeltmeleri yalnızca öneri olarak tasarlayın.</p><span class="tag">Mevcut projeden doğrulandı: ProductController.GetAll, Create, Update, Delete</span></header>
+<section class="card"><h2>A · Gerçek problem / B · Projedeki davranış</h2><p>Cache key aynı anda expire olunca çok sayıda request SQLite’a düşer (stampede). Cache yoksa DB’ye fallback dayanıklılığı artırabilir ama arızada DB’yi aşırı yükleyebilir. Redis erişilemezliği timeout/exception davranışını belirgin kılmalıdır.</p><p><span class="tag">Mevcut:</span> <code>ProductController.GetAll</code> önce Redis GET <code>products:all</code>, miss ise SQLite AsNoTracking ToListAsync, sonra Redis SET JSON TTL 10 dakika. TTL jitter/single-flight yok. Update/Delete cache silmiyor; cache hit’te en fazla eski liste TTL bitene kadar dönebilir. Create önce KeyDelete, sonra DB Add/SaveChanges: save başarısız olursa cache yok; daha önemlisi invalidation ile DB commit arasında istek SQLite’tan eski liste okuyup cache’e geri yazabilir. Cache GET/SET çevresinde try/catch/fallback yok. Redis failure GetAll exception’ını fırlatır; ErrorHandlerMiddleware bunu yakalar, genel 500 döndürür ve exception.Message body’ye yazar; Redis exception için özel mapping yok. Program.cs SyncTimeout ve ConnectTimeout 5000ms.</p><p>Appsettings Redis configured; IConnectionMultiplexer singleton and synchronous Connect on app startup. SQLite is single-file and limited for multi-instance writes. Cache key global list, not user-specific.</p></section>
+<section class="card"><h2>C · Özellikler + key tasarımı</h2><div class="cols"><div class="box"><b>Cache-aside:</b> app reads cache, then DB, populates cache. DB authoritative.</div><div class="box"><b>TTL jitter:</b> expiry spread, simultaneous reload chance reduced; cache freshness window changes.</div><div class="box"><b>Single-flight:</b> per-key local/in-process request coalescing; multiple instances may still stampede, distributed lock has lease tradeoff.</div><div class="box"><b>Stale-while-revalidate:</b> serve bounded stale copy only if business allows; metadata needed.</div></div><table><tr><th>Key</th><th>Tip / example</th><th>TTL / scope / notes</th></tr><tr><td><code>products:all</code></td><td>String serialized Product list</td><td>Actual 10m, fixed. Global list key, currently Create deletes before save; Update/Delete do not invalidate. No data version/jitter.</td></tr><tr><td><code>products:all:v{version}</code></td><td>Suggested String cache</td><td>TTL policy + random jitter; version/epoch invalidation proposal; not currently used.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint design</h2><p><code>GET api/product</code>, <code>POST api/product</code>, <code>PUT/DELETE api/product/{id}</code> <span class="tag">Mevcut projeden doğrulandı</span>; all are protected by controller-level Product role; no AllowAnonymous.</p><div class="scroll"><table><tr><th>Metot/URL</th><th>Sample response / failure</th><th>Redis / SQLite responsibility</th></tr><tr><td>GET <code>api/product</code></td><td>200 list; Redis timeout presently propagates into 500 through ErrorHandlerMiddleware, body includes exception.Message.</td><td>GET key then SQLite query then SET 10m.</td></tr><tr><td>POST <code>api/product</code></td><td>Body <code>{"name":"Lamp","price":25}</code>; 200 Product. SQLite error after cache delete is possible.</td><td>Delete cache first, then DB save (actual order).</td></tr><tr><td>PUT/DELETE <code>api/product/{id}</code></td><td>200 / 404. After success existing cached list remains unchanged until TTL in current code.</td><td>SQLite update/delete, no KeyDelete in current methods.</td></tr></table></div><p>Role Product required even GET list, although Postman Product List request has no auth token setup; this mismatch is real.</p></section>
+<section class="card"><h2>E · Improvement lab (not applied) / Redis commands</h2><ol><li>Move invalidation after successful DB commit for Create/Update/Delete; however post-commit Redis failure needs an outbox/retry or version strategy.</li><li>Add jitter: random extra duration within a bounded policy. Single-flight DB fetch per key in an instance; for multiple instances use careful distributed coordination or stale refresh.</li><li>Map Redis timeout explicitly: cache bypass to SQLite may be appropriate for low volume, but protect SQLite with concurrency limit/circuit breaker/stale fallback; no blind fallback under load.</li><li>Log structured error class/request id, redact headers and avoid exception messages with secrets. Existing ErrorHandler prints all headers; errors expose exception.Message in response.</li></ol><section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> This lab adds a separate cache endpoint/service; it does not rewrite existing ProductController. Existing <code>products:all</code> behavior and its Redis-failure 500 remain unchanged until explicitly refactored.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> Product cache is currently Redis String JSON for 10 minutes; Redis errors propagate to error middleware; Update/Delete do not invalidate. StackExchange.Redis, DbContext and singleton multiplexer already exist. No package/migration required.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Blind Redis-to-SQL fallback under unbounded load. This example collapses requests per process and logs Redis errors; production also needs DB concurrency limit/circuit breaker.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Mevcut projeden doğrulandı:</b> Existing <code>Product</code> entity already has Id/Name/Price. The cache is rebuildable; no entity, DbSet or migration is needed.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Editing SQLite schema to store a disposable cache copy.</p>
+<h3>3. DTO’lar</h3><p><b>Mevcut projeden doğrulandı:</b> GET response can reuse the existing Product model shape from current endpoint. No new DTO is required for this read-only endpoint; do not expose internal fields if the model later changes.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Returning Redis raw key/cache metadata to API consumers.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/ProductCacheKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Services;
+public static class ProductCacheKeys
+{
+    public const string All = "products:all:resilient:v1";
+}</code></pre><p>Separate key intentionally avoids changing current controller’s live cache format.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Sharing old key while changing serialization/TTL policy without a coordinated rollout.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/IProductCatalogCache.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models;
+namespace RestApi.Services;
+public interface IProductCatalogCache
+{
+    Task&lt;IReadOnlyList&lt;Product&gt;&gt; GetAllAsync(CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/ProductCatalogCache.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using RestApi.Data;
+using RestApi.Models;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class ProductCatalogCache(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer,
+    ILogger&lt;ProductCatalogCache&gt; logger) : IProductCatalogCache
+{
+    private static readonly SemaphoreSlim RefreshGate = new(1, 1);
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+
+    public async Task&lt;IReadOnlyList&lt;Product&gt;&gt; GetAllAsync(CancellationToken ct)
+    {
+        var cacheAvailable = true;
+        try
+        {
+            var cached = await _redis.StringGetAsync(ProductCacheKeys.All);
+            if (!cached.IsNull)
+            {
+                var products = JsonSerializer.Deserialize&lt;List&lt;Product&gt;&gt;(cached.ToString());
+                if (products is not null) return products;
+            }
+        }
+        catch (RedisException ex)
+        {
+            cacheAvailable = false;
+            logger.LogWarning(ex, "Redis read failed; loading product list from SQLite.");
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Product cache payload is invalid; rebuilding from SQLite.");
+            try { await _redis.KeyDeleteAsync(ProductCacheKeys.All); }
+            catch (RedisException redisEx)
+            {
+                cacheAvailable = false;
+                logger.LogWarning(redisEx, "Could not remove invalid product cache.");
+            }
+        }
+
+        await RefreshGate.WaitAsync(ct);
+        try
+        {
+            if (cacheAvailable)
+            {
+                try
+                {
+                    var secondRead = await _redis.StringGetAsync(ProductCacheKeys.All);
+                    if (!secondRead.IsNull)
+                    {
+                        var second = JsonSerializer.Deserialize&lt;List&lt;Product&gt;&gt;(secondRead.ToString());
+                        if (second is not null) return second;
+                    }
+                }
+                catch (RedisException ex)
+                {
+                    cacheAvailable = false;
+                    logger.LogWarning(ex, "Redis recheck failed; continuing with SQLite.");
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogWarning(ex, "Redis recheck payload invalid; rebuilding from SQLite.");
+                }
+            }
+            var rows = await context.Products.AsNoTracking().OrderBy(p =&gt; p.Id).ToListAsync(ct);
+            if (cacheAvailable)
+            {
+                var ttl = TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(Random.Shared.Next(30, 91));
+                try
+                {
+                    await _redis.StringSetAsync(ProductCacheKeys.All,
+                        JsonSerializer.Serialize(rows), ttl);
+                }
+                catch (RedisException ex)
+                {
+                    logger.LogWarning(ex, "Redis cache write failed; returning SQLite result.");
+                }
+            }
+            return rows;
+        }
+        finally { RefreshGate.Release(); }
+    }
+}</code></pre><p>Fallback is explicit and only Redis failures are degraded; SQLite errors still surface. Gate is process-local, not cross-instance. TTL jitter spreads later expiry but not initial cold-start load; add stale-while-revalidate only if product freshness policy permits.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Catching all exceptions and returning an empty success list. Only expected Redis/JSON cache failures are handled; database failures remain visible.</p>
+<h3>6. Program.cs — DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing DbContext service registrations after · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IProductCatalogCache, ProductCatalogCache&gt;();</code></pre><p>No new middleware; existing Authentication/Authorization order stays unchanged.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Injecting scoped DbContext into singleton cache service.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/ResilientProductsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Services;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/cache/products")]
+[Authorize(Roles = "Product")]
+public sealed class ResilientProductsController(IProductCatalogCache cache) : ControllerBase
+{
+    [HttpGet]
+    public async Task&lt;IActionResult&gt; Get(CancellationToken ct)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0) return Unauthorized();
+        return Ok(await cache.GetAllAsync(ct));
+    }
+}</code></pre><p>GET 200; anonymous 401; authenticated account without Product role 403; SQLite failure goes to existing error middleware. The NameIdentifier guard verifies the existing JWT identity even though this global catalog is not user-scoped.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Claim read without using it as ownership for user-specific data. This route is global read-only; user-specific caches must include owner ID.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · use existing login/token flow</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen request / Redis checks</b></p><pre><button class="copy">Kopyala</button><code>curl -i http://localhost:5120/api/cache/products \
+  -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli TTL products:all:resilient:v1
+docker exec -it redis-lab redis-cli GET products:all:resilient:v1
+unset TOKEN LOGIN_USER</code></pre><p>Expected 200 product array; second request should hit Redis; TTL approximately 630–690 seconds. Stop Redis and issue request: service logs warning and returns SQLite result (assuming SQLite is available). Do not change existing API behavior in this exercise.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Testing only cache hit and claiming outage handling works. Stop Redis locally and verify database fallback and warning log.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Separate key avoids silent format migration.</label></li><li><label><input type="checkbox">Cache stampede collapsed per process.</label></li><li><label><input type="checkbox">Redis failure degrades to SQLite without empty success.</label></li><li><label><input type="checkbox">SQLite load and multi-instance limitations documented.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+GET products:all
+TTL products:all
+PTTL products:all
+DEL products:all
+SCAN 0 MATCH products:* COUNT 100</code></pre><p>Actual ttl about 600 seconds after write; timing varies. SCAN is incremental and still costs work; avoid KEYS * in production.</p><h3>.NET example · recommended cache-aside shape</h3><pre><button class="copy">Kopyala</button><code>var db = mux.GetDatabase();
+try
+{
+    var cached = await db.StringGetAsync("products:all");
+    if (cached.HasValue) return Deserialize(cached);
+}
+catch (RedisException ex)
+{
+    // Proposed: bounded DB fallback/circuit-breaker policy,
+    // explicit telemetry; don't silently assume Redis is healthy.
+}
+var products = await context.Products.AsNoTracking().ToListAsync(ct);
+// SET with expiry + jitter; cap concurrent DB fills per cache key.</code></pre><p>This demonstrates policy boundary only. It is not a patch; choose fallback/circuit breaker behavior after load and consistency review.</p></section>
+<section class="card"><h2>F · Request flow, outcomes, risks</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization(Product) → ProductController.GetAll → Redis GET → hit response OR SQLite SELECT → Redis SET EX 600 → response</div><div class="cols"><div class="box"><b>Success:</b> cache hit avoids SQLite query; cache miss queries SQLite and fills Redis.</div><div class="box"><b>Failure:</b> Redis GET throws; no controller fallback; middleware catches → 500 JSON with exception message. It does not fail-open to SQLite.</div></div><ul><li>TTL synchronized expiry stampedes all API instances and loads SQLite.</li><li>Create invalidates before DB SaveChanges; concurrent miss can repopulate old values during gap. Update/Delete omit invalidation.</li><li>Redis outage fallback can overload SQLite; circuit breaker, bounded concurrent DB work, stale strategy.</li><li>5s Connect/Sync timeout configuration may increase wait during unavailable Redis/load; ConnectTimeout applies connection establishment, SyncTimeout synchronous operations; actual async operation behavior should be measured.</li><li>Eviction/memory and restart return cold cache. SQLite remains authority; no outage masking without design.</li></ul><p>Outcomes: cache-aside, invalidation order, stampede, jitter, failure policy, stale data bounds. Prerequisite none; next Module 12 tests measurable outcome.</p><h2>Tasks / checklist</h2><ol><li>Update invalidation plan for Create/Update/Delete. <details><summary>İpucu</summary>Only invalidate after DB commit; handle post-commit invalidation failure.</details></li><li>Test concurrent reads at TTL expiry. <details><summary>İpucu</summary>Count SQLite SELECTs per cache miss burst.</details></li><li>Stop Redis and record actual status/body/latency. <details><summary>İpucu</summary>Exception bubbles through middleware into 500, no SQLite fallback in current code.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">All mutations invalidate/version cache.</label></li><li><label><input type="checkbox">Stampede and stale policy tested.</label></li><li><label><input type="checkbox">Redis-down fallback bounded; SQLite capacity protected.</label></li><li><label><input type="checkbox">Secrets/headers/exception details redacted.</label></li></ul><details><summary>Kendini değerlendir</summary><p>1) TTL current? 10 minutes fixed. 2) Update/Delete invalidate? No. 3) Create order? Delete cache before SaveChanges. 4) Redis down GetAll? Exception, middleware returns 500; not SQLite fallback. 5) Redis fallback always safe? No, DB overload possible.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Only invalidate on create → update/delete stale data.</li><li>Fallback every timeout straight to SQLite → outage cascade.</li><li>Fixed common TTL for hot keys → synchronized stampede; jitter/single-flight.</li></ul></section>
+<nav class="pager"><a href="10-inventory-reservation-and-locking.html">← Previous: Inventory</a><a href="12-performance-and-resilience-testing.html">Next: Performance Testing →</a></nav><footer class="footer">Corrective patterns are proposals only; RestApi code remains unchanged.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

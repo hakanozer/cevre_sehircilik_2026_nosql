@@ -1,0 +1,205 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>09 · Idempotency</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 09 / 12</span><span class="badge">İleri</span><span class="badge">60 dakika</span></p><h1>Idempotency</h1><p>İstemci retry’larında tek mantıksal isteğin yan etkisini bir kez üretin; Redis key tek başına yeterli değildir.</p><span class="tag">Mevcut yazma endpoint’leri doğrulandı · idempotency altyapısı yok</span></header>
+<section class="card"><h2>A · Problem / B · Redis’in yeri</h2><p>Client timeout görüp aynı POST’u tekrar gönderdiğinde ilk istek aslında DB’ye yazılmış olabilir. Duplicate Product/Note/User kaydı oluşabilir. Redis SET NX PX hızlı claim/in-progress lock ve tamamlanmış response cache’i sağlar; eşzamanlı sahipliği koordine eder. Fakat crash, key eviction, DB commit-before-cache ve key TTL sonrası tekrar işleme penceresi vardır. SQLite transaction/unique constraints kalıcı doğruluk kaynağıdır. Ödeme/sipariş akışı mevcut değil; ödeme için Redis tek başına hiçbir zaman finansal doğruluk garantisi değildir. SQLite çok instance concurrency sınırlıdır.</p><h2>C · Redis features + key</h2><div class="cols"><div class="box"><b>SET NX PX:</b> key yokken claim al, lease TTL.</div><div class="box"><b>Request hash:</b> aynı key, farklı body ise 409.</div><div class="box"><b>State:</b> in-progress/completed/failed; complete response tekrar oynatılır.</div></div><table><tr><th>Key</th><th>Tip</th><th>TTL / scope</th></tr><tr><td><code>idempotency:{userId}:{key}</code></td><td>String JSON or Hash: state, requestHash, response, status</td><td>Retry policy retention; per authenticated user + client key. userId claim-derived, key length/format bounded; critical record SQLite.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint’ler</h2><p>Idempotency API/filters <b>Önerilen geliştirme</b>; hedefler mevcut rotadır. <code>POST api/product</code> ve <code>POST api/note</code> gerçek; <code>POST api/auth/register</code> mevcut. Username unique index DB son savunmasıdır. Product requires Product role; Note requires Note role; Register currently no class-level auth in AuthController.</p><div class="scroll"><table><tr><th>Metot/URL</th><th>İstek / sonuç</th><th>Redis / SQLite</th></tr><tr><td>POST <code>api/product</code> + <code>Idempotency-Key</code></td><td><code>{"name":"Desk","price":20}</code> → first 200; retry same response; same key/body diff 409.</td><td>claim/completed response; SQLite Product write authoritative.</td></tr><tr><td>POST <code>api/note</code> + key</td><td><code>{"content":"...","userId":42}</code> current body field (current API trusts it); recommended owner from JWT and no body userId. 201/replay/409.</td><td>claim + SQLite Note. Improve ownership separately.</td></tr><tr><td>POST <code>api/auth/register</code> + key</td><td>Register body User; duplicate Username unique index conflict; do not echo password hash.</td><td>Idempotency response + SQLite unique Username; sanitize stored/replayed response.</td></tr></table></div></section>
+<section class="card"><h2>E · Uygulama adımları</h2><ol><li>Require bounded Idempotency-Key and compute canonical request hash; key scope includes authenticated user/endpoint. For anonymous register, normalized username hash is sensitive; don't put raw email in Redis key.</li><li>SET NX PX claim; if existing hash differs return 409; completed response replay; in-progress return 409/202 and retry hint.</li><li>Commit DB mutation and idempotency record atomically where possible via SQLite transaction table. Redis-only record can disappear; reconcile incomplete leases.</li><li>Store safe response only; omit password/token, large bodies, secrets. Expiry retention aligned to client retries.</li></ol><section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Idempotency middleware/service yok. Use SQLite transaction + unique idempotency row as durable authority; Redis caches completed safe responses only.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, SQLite EF Core, StackExchange.Redis and singleton multiplexer available. No package needed.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis SET NX result as transactional guarantee for a separate SQL write. Redis and SQLite cannot share one atomic transaction.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Dosya yolu: <code>RestApi/Models/IdempotencyRecord.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models;
+public sealed class IdempotencyRecord
+{
+    public int Id { get; set; }
+    [Required, StringLength(120)]
+    public string Key { get; set; } = string.Empty;
+    [Required, StringLength(64)]
+    public string RequestHash { get; set; } = string.Empty;
+    [Required]
+    public int UserId { get; set; }
+    [Required]
+    public string ResponseJson { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Data/ApplicationDbContext.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>public DbSet&lt;IdempotencyRecord&gt; IdempotencyRecords { get; set; }
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+    modelBuilder.Entity&lt;IdempotencyRecord&gt;()
+        .HasIndex(x =&gt; new { x.UserId, x.Key }).IsUnique();
+}</code></pre><p>If an override exists, merge the index configuration into it. Repository root:</p><p><b>Dosya/konum: Terminal</b></p><pre><button class="copy">Kopyala</button><code>dotnet ef migrations add AddIdempotencyRecords --project RestApi
+dotnet ef database update --project RestApi</code></pre><p>Expect <code>IdempotencyRecords</code> with unique UserId+Key; rollback by applying the previous migration after backing up data.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Persisting the raw request body including credentials. This entity stores only a digest and a sanitized response.</p>
+<h3>3. DTO</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/IdempotentProductRequestDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models.Dto;
+public sealed class IdempotentProductRequestDto
+{
+    [Required, StringLength(120)]
+    public string Name { get; init; } = string.Empty;
+    [Range(typeof(decimal), "0.01", "1000000000")]
+    public decimal Price { get; init; }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/IdempotentProductResponseDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Models.Dto;
+public sealed record IdempotentProductResponseDto(int Id, string Name, decimal Price);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Key’i query/body’ye almak; require bounded request header and scope by authenticated user.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/IdempotencyRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+namespace RestApi.Services;
+public static class IdempotencyRedisKeys
+{
+    public static string Response(int userId, string key) =&gt;
+        userId &gt; 0 &amp;&amp; !string.IsNullOrWhiteSpace(key)
+            ? $"idempotency:user:{userId}:{key}"
+            : throw new ArgumentException("Invalid idempotency key.");
+}</code></pre><p>Accept only an opaque, bounded header key matching <code>^[A-Za-z0-9_-]{1,120}$</code> before calling helper. Avoid raw PII in key.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Reusing key across users or endpoints; scope keys by user and operation.</p>
+<h3>5. Servis</h3><p><b>Dosya yolu: <code>RestApi/Services/IIdempotentProductService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+namespace RestApi.Services;
+public interface IIdempotentProductService
+{
+    Task&lt;(IdempotentProductResponseDto Response, bool Replayed)&gt; CreateAsync(
+        int userId, string key, IdempotentProductRequestDto request, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/IdempotentProductService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using RestApi.Data;
+using RestApi.Models;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class IdempotentProductService(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer,
+    ILogger&lt;IdempotentProductService&gt; logger) : IIdempotentProductService
+{
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+    public async Task&lt;(IdempotentProductResponseDto Response, bool Replayed)&gt; CreateAsync(
+        int userId, string key, IdempotentProductRequestDto request, CancellationToken ct)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { request.Name, request.Price }))));
+        var redisKey = (RedisKey)IdempotencyRedisKeys.Response(userId, key);
+        try
+        {
+            var cached = await _redis.StringGetAsync(redisKey);
+            if (!cached.IsNull)
+            {
+                var entry = JsonSerializer.Deserialize&lt;CachedResponse&gt;(cached.ToString());
+                if (entry is not null &amp;&amp; entry.Hash == hash)
+                    return (entry.Response, true);
+                if (entry is not null) throw new InvalidOperationException("Key reused with different request.");
+            }
+        }
+        catch (RedisException ex) { logger.LogWarning(ex, "Idempotency cache unavailable; checking SQLite."); }
+
+        var existing = await context.IdempotencyRecords.AsNoTracking()
+            .SingleOrDefaultAsync(x =&gt; x.UserId == userId &amp;&amp; x.Key == key, ct);
+        if (existing is not null)
+        {
+            if (existing.RequestHash != hash)
+                throw new InvalidOperationException("Key reused with different request.");
+            var replay = JsonSerializer.Deserialize&lt;IdempotentProductResponseDto&gt;(existing.ResponseJson)
+                ?? throw new InvalidOperationException("Stored idempotency response is invalid.");
+            await CacheAsync(redisKey, new CachedResponse(hash, replay));
+            return (replay, true);
+        }
+
+        await using var transaction = await context.Database.BeginTransactionAsync(ct);
+        var product = new Product { Name = request.Name, Price = request.Price };
+        context.Products.Add(product);
+        await context.SaveChangesAsync(ct);
+        var response = new IdempotentProductResponseDto(product.Id, product.Name, product.Price);
+        context.IdempotencyRecords.Add(new IdempotencyRecord
+        {
+            UserId = userId, Key = key, RequestHash = hash,
+            ResponseJson = JsonSerializer.Serialize(response), CreatedAtUtc = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        await CacheAsync(redisKey, new CachedResponse(hash, response));
+        return (response, false);
+    }
+
+    private async Task CacheAsync(RedisKey key, CachedResponse value)
+    {
+        try { await _redis.StringSetAsync(key, JsonSerializer.Serialize(value), TimeSpan.FromHours(24)); }
+        catch (RedisException ex) { logger.LogWarning(ex, "Idempotency response cache write failed."); }
+    }
+    private sealed record CachedResponse(string Hash, IdempotentProductResponseDto Response);
+}</code></pre><p>SQLite transaction commits product+idempotency row atomically. Redis is optional response cache; cache miss/outage consults SQLite. Concurrent first requests can race on the unique index: one succeeds, the other surfaces DB error; production should catch the unique violation and reload the completed row, or use a DB-specific claim protocol. Keep retention aligned with client retry window.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Catching every DbUpdateException as replay. Only recognize the composite unique-key conflict and verify request hash before returning stored response.</p>
+<h3>6. Program.cs</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing service registrations after DbContext · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IIdempotentProductService, IdempotentProductService&gt;();</code></pre><p>No middleware changes.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Scoped DbContext service’i singleton kaydetmek.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/IdempotentProductsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/idempotent-products")]
+[Authorize]
+public sealed class IdempotentProductsController(IIdempotentProductService service)
+    : ControllerBase
+{
+    [HttpPost]
+    public async Task&lt;IActionResult&gt; Create(
+        [FromHeader(Name = "Idempotency-Key")] string? key,
+        IdempotentProductRequestDto request, CancellationToken ct)
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0) return Unauthorized();
+        if (key is null || !Regex.IsMatch(key, "^[A-Za-z0-9_-]{1,120}$"))
+            return BadRequest("A valid Idempotency-Key header is required.");
+        try
+        {
+            var result = await service.CreateAsync(userId, key, request, ct);
+            return result.Replayed ? Ok(result.Response) : StatusCode(201, result.Response);
+        }
+        catch (InvalidOperationException) { return Conflict(); }
+    }
+}</code></pre><p>First request 201, identical replay 200 with original product response, same key/different body 409, missing/malformed key or invalid DTO 400, anonymous 401. No password or token is stored in replay body.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Idempotency key alone as authorization. Controller remains authenticated and scopes database uniqueness by claim userId.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · obtain JWT through current login</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+IDEMPOTENCY_KEY="$(openssl rand -hex 16)"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen endpoint doğrulaması</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/idempotent-products \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+  -H 'Content-Type: application/json' --data '{"name":"Lab item","price":12.50}'
+curl -i -X POST http://localhost:5120/api/idempotent-products \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+  -H 'Content-Type: application/json' --data '{"name":"Lab item","price":12.50}'
+curl -i -X POST http://localhost:5120/api/idempotent-products \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+  -H 'Content-Type: application/json' --data '{"name":"Different","price":12.50}'
+docker exec -it redis-lab redis-cli GET "idempotency:user:YOUR_USER_ID:$IDEMPOTENCY_KEY"
+unset TOKEN LOGIN_USER IDEMPOTENCY_KEY</code></pre><p>Expected 201, then 200 with same product Id, then 409. SQL has one Product and one IdempotencyRecord; Redis response key is cache only. Substitute claim userId in redis-cli key.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Different payload on replay should not create another product or return stale response. Verify 409 and database row count.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">SQL transaction contains mutation and durable idempotency response.</label></li><li><label><input type="checkbox">Composite unique index scoped by user and key.</label></li><li><label><input type="checkbox">Request hash mismatch returns 409.</label></li><li><label><input type="checkbox">Redis outage does not erase idempotency record.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SET idempotency:42:key-demo in-progress NX PX 30000
+GET idempotency:42:key-demo
+SET idempotency:42:key-demo '{"state":"completed","status":201}' PX 86400000
+TTL idempotency:42:key-demo</code></pre><p>Use placeholder key. Real key should be opaque and bounded; state change needs compare-and-set/Lua or persistent transaction, not blind overwrite by any owner.</p><h3>.NET example · proposed idempotency claim</h3><pre><button class="copy">Kopyala</button><code>using StackExchange.Redis;
+
+public sealed class IdempotencyClaim(IConnectionMultiplexer mux)
+{
+    public async Task&lt;bool&gt; TryClaimAsync(
+        int userId, string idempotencyKey, string requestHash)
+    {
+        var key = (RedisKey)$"idempotency:{userId}:{idempotencyKey}";
+        var claimed = await mux.GetDatabase().StringSetAsync(
+            key, $"in-progress:{requestHash}",
+            TimeSpan.FromSeconds(30), When.NotExists);
+if (!claimed)
+{
+    // Load existing state; reject a body-hash mismatch;
+    // replay completed response or report in-progress.
+}
+        return claimed;
+    }
+}</code></pre><p>StackExchange.Redis API pattern; integration needs race-safe state transitions and DB transaction. Multiplexer singleton; don’t create per request.</p></section></code></pre><p>StackExchange.Redis API pattern; integration needs race-safe state transitions and DB transaction. Multiplexer singleton; don’t create per request.</p></section>
+<section class="card"><h2>F · Akış / risk / outputs</h2><div class="flow">HTTP + Idempotency-Key → middleware/controller → Redis claim → SQLite transaction/write → store durable result → Redis completed response → replay</div><div class="cols"><div class="box"><b>Success:</b> first request claims, DB writes once, stores result; retries receive equivalent outcome.</div><div class="box"><b>Failure:</b> DB commits, process crashes before Redis complete → retry must query durable idempotency row or duplicate remains possible.</div></div><ul><li>Redis lock TTL expiry while original request still running can permit second processing.</li><li>Same key with different payload must 409; hash canonicalization carefully defined.</li><li>SQLite unique index is last line for registration. Register response currently includes returned User with Password null? Existing AuthController.Register DOES NOT null it: it hashes then returns user, so hash may leak; fix is recommendation.</li><li>Redis↔SQLite atomic transaction doesn’t exist; durable idempotency table/outbox and recovery required for critical operations.</li></ul><p>Learn idempotency vs at-most-once, response replay, request hash, DB constraints. Prereq Module 08 retry/worker ideas; next Module 10 critical concurrency.</p><h2>Tasks / checklist</h2><ol><li>Add repeated key to POST Product. <details><summary>İpucu</summary>Claim plus stored response; DB write still needs recovery.</details></li><li>Reject changed body under same key. <details><summary>İpucu</summary>Canonical JSON hash compare.</details></li><li>Crash after DB commit before Redis state. <details><summary>İpucu</summary>Persist idempotency state in same SQLite transaction.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">Key scoped per user/endpoint and bounded.</label></li><li><label><input type="checkbox">Same key/different request returns 409.</label></li><li><label><input type="checkbox">Completed response replay safe; PII/secret removed.</label></li><li><label><input type="checkbox">Persistent DB recovery for critical mutation.</label></li></ul><details><summary>Kendini değerlendir</summary><p>1) SET NX does it guarantee one durable DB write? No. 2) Key/body mismatch? 409. 3) crash after SQL? Durable record/reconciliation. 4) Register existing protection? Username unique index in migration.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Redis key ekleyip bitti sanmak → state machine/recovery/db constraint kur.</li><li>Request body’yi canonicalize etmeden compare etmek → stable hash scheme.</li><li>Şifre/token içeren response saklamak → response allowlist/sanitize.</li></ul></section>
+<nav class="pager"><a href="08-background-jobs-and-streams.html">← Önceki: Background Jobs</a><a href="10-inventory-reservation-and-locking.html">Sonraki: Inventory &amp; Locking →</a></nav><footer class="footer">Ödeme/sipariş entegrasyonu yok; idempotency uygulaması öneridir.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

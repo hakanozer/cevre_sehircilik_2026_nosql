@@ -1,0 +1,193 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>10 · Inventory Reservation and Locking</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 10 / 12</span><span class="badge">İleri</span><span class="badge">70 dakika</span></p><h1>Stok Rezervasyonu ve Dağıtık Kilitleme</h1><p>Fazla satış riskini ve kilit protokolünün sınırlarını ayırın.</p><span class="tag">Mevcut projeden doğrulandı: Product.Id/Price</span> · <span class="proposal">Stok alanı, sipariş ve endpoint öneridir</span></header>
+<section class="card"><h2>A · Problem / B · Redis seçimi</h2><p>Son ürüne aynı anda iki istek geldiğinde önce okuyup sonra yazma (read-then-write) fazla satışa yol açabilir. Uygulama içi kilit farklı instance’ları koordine etmez. Redis Lua stok değerini okuyup azaltmayı Redis içinde atomik yapabilir; rezervasyon TTL’i terk edilmiş tutmaları sınırlar. Ancak mevcut <code>Product</code> modelinde Stock yok; SQLite’a stok kolonu/tablosu, migration ve DB kısıtları gerekir. SQLite kalıcı doğruluk kaynağıdır; Redis Lua ile SQLite transaction arasında dağıtık transaction kurulmaz. SQLite tek dosyası çok instance’lı eşzamanlı yazma için sınırlıdır. Kampanya hakkı gibi tek kullanımlık işlem de yalnız kilit değil kalıcı unique constraint ister.</p><h2>C · Redis özellikleri ve key’ler</h2><div class="cols"><div class="box"><b>Lua ile koşullu güncelleme:</b> Stok miktar için yeterliyse Redis içindeki sayaç atomik azaltılır. SQLite güncellemesi ayrı başarısız olabilir.</div><div class="box"><b>SET NX PX:</b> Kısa ömürlü, sahibi belirli kilit alma.</div><div class="box"><b>Güvenli bırakma:</b> Lua DEL öncesi sahip token’ını karşılaştırır; süresi dolan kilit artık başka çağırana ait olabilir.</div></div><table><tr><th>Key</th><th>Tip / örnek</th><th>TTL / kapsam / tutarlılık</th></tr><tr><td><code>inventory:reservation:{productId}:{reservationId}</code></td><td>String/Hash; ayrılan adet + durum</td><td>Kısa checkout penceresi; reservationId sunucuda üretilir, userId JWT’den alınır.</td></tr><tr><td><code>lock:inventory:product:{productId}</code></td><td>String; rastgele sahip token’ı</td><td>PX lease; doğrudan DEL yok; tek Redis primary varsayımı ve fencing ihtiyacı.</td></tr><tr><td><code>inventory:stock:{productId}</code></td><td>Redis projeksiyonu kullanılırsa integer String</td><td>SQLite ile uzlaştırılır. Mevcut DB’de Stock alanı yoktur.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Tüm stok/sipariş rotaları <b>Önerilen geliştirme</b>; stok/sipariş API’si yoktur. ProductController rolü Product; Order rolü, policy veya Admin yoktur.</p><div class="scroll"><table><tr><th>Metot/URL</th><th>İstek / başarı / hata</th><th>Redis / SQLite</th></tr><tr><td>POST <code>api/inventory/{productId}/reservations</code></td><td><code>{"quantity":1}</code> → 201 reservationId; stok yetmezse 409, ürün yoksa 404.</td><td>Redis atomik rezervasyon denemesi; SQLite stok/azaltma transaction’ı otoritatif.</td></tr><tr><td>POST <code>api/reservations/{id}/confirm</code></td><td>→ 200 confirmed; expired/already processed için 404/409.</td><td>Idempotent durum geçişi; SQLite transaction/unique order state.</td></tr><tr><td>DELETE <code>api/reservations/{id}</code></td><td>→ 204 released; tekrarlanan silme idempotent.</td><td>JWT’den owner kontrolü, güvenli token release; SQLite durumu geri alır/günceller.</td></tr></table></div><p>Owner userId’yi body’den alma. Product.Price SQLite’tan gelir; stok şu anda mevcut değildir.</p></section>
+<section class="card"><h2>E · Adım adım tasarım</h2><ol><li>Stock alanı/tablosunu migration ile ekle; check constraint ve concurrency token değerlendir. DB’de doğrudan eşzamanlı update test et.</li><li>Doğruluk kaynağını belirle: SQLite transaction içindeki koşullu UPDATE en basit otoritatif yol olabilir. Redis rezervasyonu koordinasyon projeksiyonuyla uzlaştırılmalıdır.</li><li>Redis kilidinde kriptografik sahip token’ı üret; <code>SET key token NX PX leaseMs</code>, sınırlı retry/jitter; compare-and-delete script. Kilit süresi/GC pause çakışmaya yol açabilir; fencing token veya DB koşullu update gerekir.</li><li>Rezervasyon expiry yalnızca Redis key’in kaybolması değildir; sweeper/uzlaştırma SQLite’taki eski rezervasyonları yönetir.</li></ol>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Product stock and reservation API don’t exist. SQLite conditional update is inventory authority; Redis lock is an additional coordination optimization, never the only stock guard.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> Product has Id/Name/Price only; Redis multiplexer and EF Core SQLite are already configured. No package needed.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis lock acquired diye stock is guaranteed. Lease can expire; conditional SQLite update is the actual no-oversell guard.</p>
+<h3>2. Model ve migration</h3><p><b>Dosya yolu: <code>RestApi/Models/Product.cs</code> · Önerilen geliştirme, existing class içine ekle</b></p><pre><button class="copy">Kopyala</button><code>[Range(0, int.MaxValue)]
+public int Stock { get; set; }</code></pre><p><b>Dosya yolu: <code>RestApi/Models/Reservation.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models;
+public sealed class Reservation
+{
+    public int Id { get; set; }
+    [Required]
+    public int UserId { get; set; }
+    [Required]
+    public int ProductId { get; set; }
+    [Range(1, int.MaxValue)]
+    public int Quantity { get; set; }
+    [Required, StringLength(20)]
+    public string Status { get; set; } = "Reserved";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Data/ApplicationDbContext.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>public DbSet&lt;Reservation&gt; Reservations { get; set; }
+// In OnModelCreating (merge with any existing override):
+modelBuilder.Entity&lt;Reservation&gt;().HasIndex(r =&gt; new { r.UserId, r.Status });
+modelBuilder.Entity&lt;Reservation&gt;().HasOne&lt;User&gt;().WithMany()
+    .HasForeignKey(r =&gt; r.UserId).OnDelete(DeleteBehavior.Restrict);
+modelBuilder.Entity&lt;Reservation&gt;().HasOne&lt;Product&gt;().WithMany()
+    .HasForeignKey(r =&gt; r.ProductId).OnDelete(DeleteBehavior.Restrict);</code></pre><p>Existing products need an explicit stock backfill/default decision; default 0 is safe, but set inventory deliberately. Repository root:</p><p><b>Dosya/konum: Terminal</b></p><pre><button class="copy">Kopyala</button><code>dotnet ef migrations add AddInventoryReservations --project RestApi
+dotnet ef database update --project RestApi</code></pre><p>Expected <code>Products.Stock</code> column and <code>Reservations</code> table/FK/index. Review SQLite migration and backfill existing stock; rollback to previous migration if necessary.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Existing products silently get stock that is too high or negative. Inspect generated default/backfill and check the non-negative invariant.</p>
+<h3>3. DTO</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/ReserveInventoryDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models.Dto;
+public sealed class ReserveInventoryDto
+{
+    [Range(1, 1000)]
+    public int Quantity { get; init; }
+}
+public sealed record ReservationResponseDto(int Id, int ProductId, int Quantity, string Status);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Accepting stock, price or userId from request; those values come from DB/claim.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/InventoryRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+namespace RestApi.Services;
+public static class InventoryRedisKeys
+{
+    public static string Lock(int productId) =&gt;
+        productId &gt; 0 ? $"lock:inventory:product:{productId}"
+                      : throw new ArgumentOutOfRangeException(nameof(productId));
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> One global lock serializes unrelated products. Lock key is per product; database still validates available quantity.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/InventoryExceptions.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+namespace RestApi.Services;
+public sealed class ProductNotFoundException : Exception { }
+public sealed class InsufficientStockException : Exception { }
+public sealed class InventoryLockBusyException : Exception { }</code></pre><p><b>Dosya yolu: <code>RestApi/Services/IInventoryService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+namespace RestApi.Services;
+public interface IInventoryService
+{
+    Task&lt;ReservationResponseDto&gt; ReserveAsync(int userId, int productId, int quantity, CancellationToken ct);
+    Task&lt;bool&gt; ReleaseAsync(int userId, int reservationId, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/InventoryService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class InventoryService(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer) : IInventoryService
+{
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+    public async Task&lt;ReservationResponseDto&gt; ReserveAsync(
+        int userId, int productId, int quantity, CancellationToken ct)
+    {
+        var key = (RedisKey)InventoryRedisKeys.Lock(productId);
+        var token = Guid.NewGuid().ToString("N");
+        if (!await _redis.LockTakeAsync(key, token, TimeSpan.FromSeconds(10)))
+            throw new InventoryLockBusyException();
+        try
+        {
+            await using var tx = await context.Database.BeginTransactionAsync(ct);
+            var changed = await context.Products.Where(p =&gt; p.Id == productId &amp;&amp; p.Stock &gt;= quantity)
+                .ExecuteUpdateAsync(s =&gt; s.SetProperty(p =&gt; p.Stock, p =&gt; p.Stock - quantity), ct);
+            if (changed == 0)
+            {
+                if (!await context.Products.AnyAsync(p =&gt; p.Id == productId, ct))
+                    throw new ProductNotFoundException();
+                throw new InsufficientStockException();
+            }
+            var row = new Reservation { UserId = userId, ProductId = productId, Quantity = quantity };
+            context.Reservations.Add(row);
+            await context.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return new ReservationResponseDto(row.Id, productId, quantity, row.Status);
+        }
+        finally
+        {
+            await _redis.LockReleaseAsync(key, token);
+        }
+    }
+
+    public async Task&lt;bool&gt; ReleaseAsync(int userId, int reservationId, CancellationToken ct)
+    {
+        var row = await context.Reservations.SingleOrDefaultAsync(
+            r =&gt; r.Id == reservationId &amp;&amp; r.UserId == userId, ct);
+        if (row is null) return false;
+        if (row.Status == "Released") return true;
+        var key = (RedisKey)InventoryRedisKeys.Lock(row.ProductId);
+        var token = Guid.NewGuid().ToString("N");
+        if (!await _redis.LockTakeAsync(key, token, TimeSpan.FromSeconds(10)))
+            throw new InventoryLockBusyException();
+        try
+        {
+            await using var tx = await context.Database.BeginTransactionAsync(ct);
+            row = await context.Reservations.SingleAsync(
+                r =&gt; r.Id == reservationId &amp;&amp; r.UserId == userId, ct);
+            if (row.Status == "Reserved")
+            {
+                await context.Products.Where(p =&gt; p.Id == row.ProductId)
+                    .ExecuteUpdateAsync(s =&gt; s.SetProperty(p =&gt; p.Stock, p =&gt; p.Stock + row.Quantity), ct);
+                row.Status = "Released";
+                await context.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+            return true;
+        }
+        finally { await _redis.LockReleaseAsync(key, token); }
+    }
+}</code></pre><p>SQLite conditional stock update is authoritative; Redis lock only reduces contention. Redis exceptions propagate and controller returns 503; if failure happens after SQL commit (e.g. lock release), reservation may already exist. A lease expiry still allows two lock holders, but conditional SQL update prevents oversell. Add expiry/sweeper and stronger concurrency policy before production.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Lock release exception silently swallowed or assuming transaction rollback after commit. Report uncertainty and reconcile durable reservation state.</p>
+<h3>6. Program.cs</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing registrations after DbContext · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IInventoryService, InventoryService&gt;();</code></pre><p>No middleware change; existing auth middleware remains.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Scoped service injects DbContext into singleton. Register scoped.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/InventoryController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/inventory")]
+[Authorize]
+public sealed class InventoryController(IInventoryService service) : ControllerBase
+{
+    private bool TryUserId(out int id) =&gt;
+        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out id) &amp;&amp; id &gt; 0;
+    [HttpPost("{productId:int}/reservations")]
+    public async Task&lt;IActionResult&gt; Reserve(int productId, ReserveInventoryDto request, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        if (productId &lt;= 0) return BadRequest();
+        try { return StatusCode(201, await service.ReserveAsync(userId, productId, request.Quantity, ct)); }
+        catch (ProductNotFoundException) { return NotFound(); }
+        catch (InsufficientStockException) { return Conflict(new ProblemDetails { Title="Insufficient stock." }); }
+        catch (InventoryLockBusyException) { return Conflict(new ProblemDetails { Title="Inventory is being updated; retry." }); }
+        catch (RedisException) { return StatusCode(503); }
+    }
+    [HttpDelete("reservations/{id:int}")]
+    public async Task&lt;IActionResult&gt; Release(int id, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        try { return await service.ReleaseAsync(userId, id, ct) ? NoContent() : NotFound(); }
+        catch (InventoryLockBusyException) { return Conflict(); }
+        catch (RedisException) { return StatusCode(503); }
+    }
+}</code></pre><p>Reserve 201; missing product 404; insufficient stock/lock busy 409; malformed quantity 400; anonymous 401; Redis unavailable 503. Release is owner-scoped (204 / 404), repeat release 204.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Reservation ID endpoint without owner filter. Every lookup includes claim-derived userId.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · login and token</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen verification</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/inventory/12/reservations \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"quantity":1}'
+docker exec -it redis-lab redis-cli GET lock:inventory:product:12
+curl -i -X DELETE http://localhost:5120/api/inventory/reservations/1 \
+  -H "Authorization: Bearer $TOKEN"
+unset TOKEN LOGIN_USER</code></pre><p>Use an existing Product ID with Stock pre-populated. Expected successful 201 ReservationResponseDto and SQLite stock decreases by quantity; insufficient inventory 409; lock key normally disappears after action; release restores stock and returns 204. ID 12/1 are examples, not guaranteed records.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Reading missing lock key as a failed reservation. The lock is intentionally ephemeral; verify durable stock and Reservation row in SQLite.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Stock and reservation migration applied/backfill reviewed.</label></li><li><label><input type="checkbox">SQL conditional update prevents negative stock.</label></li><li><label><input type="checkbox">Lock release uses owner token and finally.</label></li><li><label><input type="checkbox">Reservation operations filter by current user.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SET lock:inventory:product:12 owner-token NX PX 5000
+GET lock:inventory:product:12</code></pre><p>Kilidi bırakmak için doğrudan DEL kullanma. Lease iş sürerken bitebilir; sahip token’ı zorunludur. Güvenli bırakma Lua koşulu: <code>if GET(key)==token then DEL(key) else 0</code>.</p><h3>.NET örneği · önerilen kilit servisi</h3><pre><button class="copy">Kopyala</button><code>using StackExchange.Redis;
+
+public sealed class InventoryLockService(IConnectionMultiplexer mux)
+{
+    public Task&lt;bool&gt; TryAcquireAsync(int productId, string ownerToken) =&gt;
+        mux.GetDatabase().StringSetAsync(
+            $"lock:inventory:product:{productId}",
+            ownerToken, TimeSpan.FromSeconds(5), When.NotExists);
+}</code></pre><p>Controller bir sahip token’ı üretip bu metodu çağırır; bırakma compare-token Lua ile yapılır. Kayıtlı singleton multiplexer ve scoped DbContext kullan; Redis kilidi SQLite commit’ini Redis ile atomik hale getirmez.</p></section>
+<section class="card"><h2>F · Akış, production, öğrenme çıktıları</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → ReservationController → Redis Lua/SET NX lease → SQLite transaction/constraint → yanıt</div><div class="cols"><div class="box"><b>Başarı:</b> stok yeterli, koşullu DB geçişi başarılı, rezervasyon kaydedilmiş ve confirm tekrarı idempotent.</div><div class="box"><b>Hata:</b> duraklama sırasında lease süresi dolar; başka çağıran kilidi alır. Eski çağıranın DB update’i version/fencing/koşulla reddedilmeli; eski sahip yeni kilidi bırakamamalı.</div></div><ul><li>Lua yalnız Redis içinde atomik; Redis/SQLite transaction yok.</li><li>Redlock tartışması kapsamlıdır; bu lab tek Redis instance varsayar. Lease DB constraint/fencing’in yerine geçmez.</li><li>Redis restart/eviction rezervasyon state’ini kaybettirebilir; SQLite ile uzlaştır.</li><li>Reserve/release idempotent tasarla; başarı sonrası timeout retry için güvenli olmalı.</li><li>TTL tam zamanda silinme garantisi değildir; rezervasyon için açık expiry politikası gerekir.</li></ul><p>Çıktılar: SET NX PX, sahip güvenli release, lease/fencing, DB doğruluk sınırı. Önkoşul Modül 09 Idempotency. Stock alanı yok; yalnız önerilen migration ile eklenebilir.</p><h2>Görevler / kontrol listesi</h2><ol><li>Stok şeması önerisini tasarla. <details><summary>İpucu</summary>DB koşullu update/constraint doğruluk kaynağıdır.</details></li><li>Sahip kontrollü kilit bırak. <details><summary>İpucu</summary>DEL’den önce Lua içinde token karşılaştır.</details></li><li>Yavaş DB işlemi sırasında lease expiry simüle et. <details><summary>İpucu</summary>Fencing/version condition ile stale owner commit edemesin.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">Stock DB şeması ve migration eklendi mi?</label></li><li><label><input type="checkbox">Redis/SQLite tutarlılık ve uzlaştırma planı var mı?</label></li><li><label><input type="checkbox">Kilit token, PX lease, compare-release var mı?</label></li><li><label><input type="checkbox">Idempotent confirm ve DB constraint var mı?</label></li></ul><details><summary>Kendini değerlendir · yanıtlar</summary><p>1) Lua SQLite’ta da atomik mi? Hayır. 2) Sahip token’ı neden? Sonraki sahibin kilidini silmemek. 3) Lease expiry riski? İşler çakışabilir; fencing/DB koşullu update gerekir. 4) Mevcut stok kaynağı? Stock yok; migration öneridir.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Product’ta Stock var sanmak → yok; şema eklemek öneridir.</li><li>Kilidi düz DEL ile bırakmak → sahipliği atomik karşılaştır.</li><li>Redis kilidini stok doğruluğu sanmak → DB koşulu/constraint otoritatiftir.</li></ul></section>
+<nav class="pager"><a href="09-idempotency.html">← Önceki: Idempotency</a><a href="11-cache-stampede-and-redis-outage.html">Sonraki: Cache Stampede →</a></nav><footer class="footer">Stok modeli ve rotalar öneridir; mevcut işlev değildir.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

@@ -1,0 +1,148 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>02 · Distributed Rate Limiting</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 02 / 12</span><span class="badge">Orta</span><span class="badge">55 dakika</span></p><h1>Distributed Rate Limiting</h1><p>API sınırını tüm instance’lar arasında ortak hale getirin; login abuse ve 429 davranışını tasarlayın.</p><span class="tag">Mevcut projeden doğrulandı: Program.cs rate limiter kaydı (middleware pasif)</span></header>
+<section class="card"><h2>A · Gerçek hayat problemi</h2><p>Her instance kendi sayacını tutarsa istemci N instance’a dağıtılan toplamda N kat limite ulaşabilir. Yalnız uygulama belleği süreç yeniden başlayınca sıfırlanır. Login brute force aynı zamanda kullanıcı varlığını 404/401 ayrımıyla öğrenmeye elverişlidir. Ortak Redis atomik sayaç sunar; proxy arkasındaki IP ancak proxy güveni doğru yapılandırılmışsa kullanılmalıdır.</p><h2>B · Bu uygulamada neden?</h2><p><span class="tag">Mevcut:</span> <code>Program.cs</code> AddRateLimiter içinde fixed window, PermitLimit=1, Window=1s, QueueLimit=0 ve partition <code>User.Identity.Name</code> veya Host. Ancak <code>app.UseRateLimiter()</code> yorum satırında; çalışan rate limit yok. Built-in limiter süreç içidir, Redis destekli paylaşımlı sayaç değildir. Login hedefi gerçek <code>POST api/auth/login</code>. SQLite her hit için sayılmamalı; SQLite tek dosyalı kullanımda çok instance yazma için zaten sınırlıdır. Redis sayacı uygulama limit kararını koordine eder ama kimlik doğrulama/DB erişimini engellemeyi tek başına sağlamaz.</p></section>
+<section class="card"><h2>C · Özellik, key ve endpoint’ler</h2><div class="cols"><div class="box"><h3>INCR + TTL</h3><p>Fixed-window sayaç; bir Lua script içinde ilk artış ve PEXPIRE atomik yapılır. Ayrı INCR ardından EXPIRE olursa süreç arada düşüp süresiz key bırakabilir.</p></div><div class="box"><h3>Sliding window</h3><p>Sorted Set zaman damgalarıyla daha düzgün dağılım; daha çok bellek/komut ve trim maliyeti. Sınırın iş ihtiyacına göre seç.</p></div><div class="box"><h3>Yerleşik ASP.NET limiter</h3><p>Tek instance için uygundur; Redis sayaçlarına doğal olarak çevrilmez. Authentication sonrası middleware yerleşimi gerekir.</p></div></div><div class="scroll"><table><tr><th>Key</th><th>Tip / örnek</th><th>TTL / kapsam</th></tr><tr><td><code>rate:user:{userId}:login</code></td><td>String sayaç; identity bazlı abuse limit</td><td>Pencere; username/e-posta yerine hashlenmiş identifier veya userId; anonim login öncesi userId olmayabilir.</td></tr><tr><td><code>rate:ip:{ip}:login</code></td><td>String sayaç</td><td>Pencere; IP PII kabul edilerek kısa tutulur; trusted proxy değerlendirilir.</td></tr></table></div>
+<p>Önerilen rotalar: <code>POST api/auth/login</code> (mevcut), <code>POST api/auth/register</code> (mevcut), <code>GET api/product</code> (mevcut). Login: 200 token; 401 genel hata; 429 <code>{"error":"too_many_requests"}</code> + <code>Retry-After</code>. Register: 201/400/429. Product: JWT Product rolü gerekli; 200/401/403/429. Redis counter hit operation; SQLite credentials/products remain authoritative. Login user missing currently 404 vs wrong password 401; recommended uniform 401 response to reduce enumeration.</p></section>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Aşağıdaki rate-limit endpoint/service örneği mevcut API’ye eklenmemiştir. Kod, authenticated user ID’yi claim’den kullanıp Redis’te atomik bir fixed-window sayaç uygular. Mevcut <code>Program.cs</code> built-in limiter kaydı ayrıca doğrulanmıştır; <code>UseRateLimiter()</code> yorumda olduğundan pasiftir.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> StackExchange.Redis 3.3.1, EF Core SQLite 9.0.2, .NET 9 ve singleton <code>IConnectionMultiplexer</code> mevcut. Yeni paket, appsettings anahtarı veya DB migration gerekmez. Redis yoksa repository root’ta <code>docker compose up -d redis</code> çalıştırın.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Built-in limiter’ın tanımlı olmasını aktif limiter sanmak. Gerçek projede middleware satırı yorumda; ayrıca built-in sayaç süreç belleğindedir ve instance’lar arasında paylaşılmaz.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Mevcut projeden doğrulandı:</b> Rate-limit sayaçları geçici TTL verisidir; entity/DbSet/tablo gerektirmez. Migration veya <code>dotnet ef database update</code> çalıştırmayın. Deneme sonuçlarını kalıcı audit olarak saklama ihtiyacı ayrı bir iş kuralıdır.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Her request sayımı SQLite’a yazmak; bu hem DB’yi gereksiz yükler hem de çok instance’lı yazma için sınırlı SQLite’ı darboğaz yapar.</p>
+<h3>3. DTO</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/RateLimitResultDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Models.Dto;
+
+public sealed record RateLimitResultDto(
+    bool Allowed, long Limit, long Remaining, long RetryAfterSeconds);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Rate-limit partition key’ini response body’den almak. Kullanıcı ID’si doğrulanmış JWT claim’inden, anonim login denemeleri için IP ise güvenilen proxy politikasından türetilmelidir.</p>
+<h3>4. Redis key yardımcısı</h3><p><b>Dosya yolu: <code>RestApi/Services/RateLimitRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Linq;
+
+namespace RestApi.Services;
+
+public static class RateLimitRedisKeys
+{
+    public static string UserWindow(int userId, string operation, long windowNumber)
+    {
+        if (userId &lt;= 0) throw new ArgumentOutOfRangeException(nameof(userId));
+        if (string.IsNullOrWhiteSpace(operation)
+            || operation.Any(c =&gt; !char.IsAsciiLetterOrDigit(c) &amp;&amp; c != '-'))
+            throw new ArgumentException("Invalid operation key.", nameof(operation));
+        return $"rate:user:{userId}:{operation}:{windowNumber}";
+    }
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> E-posta/Username’i Redis key’ine açık koymak; key’lerde kişisel veri yerine userId kullanın.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/IRateLimitService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+
+namespace RestApi.Services;
+
+public interface IRateLimitService
+{
+    Task&lt;RateLimitResultDto&gt; CheckAsync(
+        int userId, string operation, long limit, TimeSpan window);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/RateLimitService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Linq;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+
+namespace RestApi.Services;
+
+public sealed class RateLimitService(IConnectionMultiplexer multiplexer)
+    : IRateLimitService
+{
+    private const string IncrementScript = @"
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+return {count, redis.call('PTTL', KEYS[1])}";
+
+    public async Task&lt;RateLimitResultDto&gt; CheckAsync(
+        int userId, string operation, long limit, TimeSpan window)
+    {
+        if (limit &lt;= 0) throw new ArgumentOutOfRangeException(nameof(limit));
+        if (window &lt;= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(window));
+
+        var windowMs = checked((long)Math.Ceiling(window.TotalMilliseconds));
+        if (windowMs &lt;= 0) throw new ArgumentOutOfRangeException(nameof(window));
+        var windowNumber = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / windowMs;
+        var key = (RedisKey)RateLimitRedisKeys.UserWindow(
+            userId, operation, windowNumber);
+        var result = (RedisResult[])await multiplexer.GetDatabase()
+            .ScriptEvaluateAsync(IncrementScript,
+                new[] { key }, new RedisValue[] { windowMs });
+        var count = (long)result[0];
+        var ttlMs = (long)result[1];
+        var retrySeconds = Math.Max(1L, (ttlMs + 999) / 1000);
+
+        return new RateLimitResultDto(
+            count &lt;= limit,
+            limit,
+            Math.Max(0, limit - count),
+            count &lt;= limit ? 0 : retrySeconds);
+    }
+}</code></pre><p>Lua, INCR ile ilk PEXPIRE işlemini aynı Redis çalıştırımında yapar; script yalnız Redis tarafında atomiktir. Connection/timeout hatası yutulmaz; controller 503 verir (bu örneğin fail-closed seçimi). Üretimde IP/anonymized-login ve account bazlı ayrı sayaçlar gerekir.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> INCR ve EXPIRE’ı ayrı çağrılarda yapıp süreç iki komut arasında durursa TTL’siz sayaç bırakmak. Ayrıca bu fixed window sınırında burst olabilir; sliding window farklı bellek/işlem maliyeti getirir.</p>
+<h3>6. Program.cs — DI ve middleware sırası</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (using grubu) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;</code></pre><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (<code>AddDbContext&lt;ApplicationDbContext&gt;</code> sonrasında) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>builder.Services.AddScoped&lt;IRateLimitService, RateLimitService&gt;();</code></pre><p>Bu sample custom endpoint controller kullandığından <code>UseRateLimiter</code> middleware’i gerektirmez. Mevcut built-in limiter’ı ayrıca etkinleştirirsen <code>UseAuthentication()</code> sonrasına ve <code>UseAuthorization()</code> öncesine koy; authenticated partition ancak authentication’dan sonra bilinir. Middleware’i etkinleştirmek tek başına onu distributed yapmaz.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> EF DbContext kullanan servis olmasa da rate-limit servisinde her request için yeni multiplexer açmak. Singleton <code>IConnectionMultiplexer</code> enjekte edilir, servis scoped kalır.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/RateLimitController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Services;
+using StackExchange.Redis;
+
+namespace RestApi.Controllers;
+
+[ApiController]
+[Route("api/limits")]
+[Authorize]
+public sealed class RateLimitController(IRateLimitService limiter) : ControllerBase
+{
+    [HttpPost("check")]
+    public async Task&lt;IActionResult&gt; Check()
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0)
+            return Unauthorized();
+
+        try
+        {
+            var result = await limiter.CheckAsync(
+                userId, "demo", 5, TimeSpan.FromMinutes(1));
+            Response.Headers["Retry-After"] = result.RetryAfterSeconds.ToString();
+            return result.Allowed
+                ? Ok(result)
+                : StatusCode(429, result);
+        }
+        catch (RedisException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503, Title = "Rate-limit store unavailable."
+            });
+        }
+    }
+}</code></pre><p><code>POST api/limits/check</code> authenticated kullanıcı için 5/dakika demo limiti döndürür; izin varsa 200, limit dolduysa 429 + Retry-After, Redis kapalıysa 503, token/claim yoksa 401. Bu route login limiter’ı değildir; mevcut <code>POST api/auth/login</code> için anonim IP + normalized identifier kontrolü AuthController’a ayrıca entegre edilmelidir. Anonim login’de userId claim henüz yoktur. Mevcut 404/401 ayrımı da kullanıcı enumeration riski taşır.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Login endpoint’ini kullanıcı kimliğiyle partition etmek; başarısız login öncesinde doğrulanmış user claim yoktur. Username’i raw key yapmak yerine normalize edip gizlilik için ayrı, kısıtlı bir strateji tasarlayın.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · Mevcut login endpoint’i + önerilen kontrol endpoint’i</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · önerilen rate-limit endpoint’i</b></p><pre><button class="copy">Kopyala</button><code>for i in 1 2 3 4 5 6; do
+  curl -i -X POST http://localhost:5120/api/limits/check \
+    -H "Authorization: Bearer $TOKEN"
+done
+docker exec -it redis-lab redis-cli SCAN 0 MATCH 'rate:user:*' COUNT 100
+unset TOKEN LOGIN_USER</code></pre><p>İlk beş istek 200; sonraki istek(ler) fixed window içinde 429 ve Retry-After alır. Window sınırında hangi bucket’a girdiğine göre sonuç farklılaşabilir. Key’de userId/operation/windowNumber vardır; TTL pencere bitimine yaklaşır. Token/parola çıktısını kaydetmeyin.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Testi 1 req/sec olan built-in limiter aktifmiş gibi yorumlamak; mevcut middleware pasiftir, fakat ortamda birisi etkinleştirdiyse sonucu etkiler. Çok instance testi için aynı Redis’e bağlı en az iki instance ve aynı JWT ile karşılaştırın.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Counter increment + ilk TTL Lua ile atomik.</label></li><li><label><input type="checkbox">[Authorize] userId’yi NameIdentifier’dan alıyor.</label></li><li><label><input type="checkbox">429 ve Retry-After gözlemlendi.</label></li><li><label><input type="checkbox">Redis outage 503; sessiz limitsiz geçiş yok.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<section class="card"><h2>D · Adım adım uygulama</h2><ol><li><b>Etkinleştirme:</b> mevcut built-in limiter’a OnRejected 429+Retry-After ekle ve authentication’dan sonra UseRateLimiter konumlandır. Doğrula: limiter route’a uygulanır; identity adı doğru partition olur. Hata: auth öncesi user-based partition.</li><li><b>Dağıtık sayaç:</b> <code>RateLimitService</code> Services’e; DI’de scoped; singleton multiplexer enjeksiyonu. Doğrula: iki API instance aynı Redis’e bağlanınca ortak limit. Hata: instance başına local sayaç.</li><li><b>Atomik pencereler:</b> INCR+TTL Lua ile tek Redis işlem akışında; reset zamanı ve Retry-After’ı birlikte dön. Doğrula: eşzamanlı isteklerde limit aşılmaz. Redis Lua SQLite transaction değildir.</li><li><b>Login koruması:</b> IP + normalized identifier ayrı sınırlar, account lockout riski, 401 eşdeğer yanıt. Doğrula: kayıtlı olmayan/kötü parolalı cevapların ayrışmaması.</li></ol><h3>Redis Komut Laboratuvarı</h3><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+INCR rate:user:42:login
+EXPIRE rate:user:42:login 60
+TTL rate:user:42:login
+GET rate:user:42:login</code></pre><p>Komutlar kavramı gösterir; aradaki crash yarışını çözen production uygulaması tek atomik script kullanmalıdır.</p><h3>.NET örneği · Services/RateLimitService.cs (script fikri)</h3><pre><button class="copy">Kopyala</button><code>private const string WindowScript = @"
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+local ttl = redis.call('PTTL', KEYS[1])
+return {n, ttl}";
+// var db = mux.GetDatabase();
+// var result = (RedisResult[])await db.ScriptEvaluateAsync(
+//     WindowScript, new RedisKey[] { key }, new RedisValue[] { windowMs });
+// StackExchange.Redis 3.x: singleton IConnectionMultiplexer kullanın.</code></pre><p>Bu script first-hit TTL yarışını önler. Limit kararı, reset zamanı, key cardinality, fail-closed/open ve overload politikası ayrıca tasarlanır.</p></section>
+<section class="card"><h2>E · Akış, senaryolar, riskler</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → Rate limiter (önerilen, auth sonrası) → Controller → Redis sayaç → gerekirse SQLite</div><div class="cols"><div class="box"><b>Başarılı:</b> Sayaç pencere içinde izinli → endpoint işlenir; aşımda 429 ve doğru Retry-After.</div><div class="box"><b>Hatalı:</b> Redis timeout → güvenlik endpoint’inde fail-closed (503/429 politika) ya da belgeli fallback; sessizce limitsiz devam etme. Açık fail-open SQLite/API’yi aşırı yükleyebilir.</div></div><ul><li>Fixed window sınırında kısa süreli burst olabilir; sliding window maliyetini karşılaştır.</li><li>Anonymous User.Identity.Name boş olabilir; shared Host key tüm ziyaretçileri tek partition’a toplar.</li><li>Key’e raw email koyma; hashed normalized identifier gerekiyorsa secret/key rotation planla.</li><li>Redis memory/eviction sayaçları düşürüp limiti gevşetebilir. SQLite kalıcı kullanıcı kaynağıdır, dağıtık limiter değildir.</li></ul><h2>F · Öğrenme çıktıları ve önkoşul</h2><p>INCR/PEXPIRE atomikliği, fixed/sliding window, local/distributed farkı, partitioning ve HTTP 429 öğrenilir. Önkoşul yok; Modül 03’te benzer fail policy düşünülür.</p><h2>G · Görevler</h2><ol><li>Bir dakikalık fixed window simüle et. <details><summary>İpucu</summary>Key ve pencereyi endpoint/user sınırına göre ayır.</details></li><li>Login için IP ve identifier limitlerini tasarla. <details><summary>İpucu</summary>Authentication öncesi user id mevcut değildir; identifier’ı key’e açık yazma.</details></li><li>INCR/EXPIRE crash yarışını test et, sonra Lua ile kapat. <details><summary>İpucu</summary>Script’te ilk artışta PEXPIRE; testte paralel yük ve TTL gözlemi.</details></li></ol><h2>H · Production checklist / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">Limit tüm instance’lar arasında ortak mı?</label></li><li><label><input type="checkbox">UseRateLimiter auth sonrası mı ve 429 başlığı var mı?</label></li><li><label><input type="checkbox">Counter ve TTL atomik; Redis outage kararı bilinçli mi?</label></li><li><label><input type="checkbox">Proxy’den gelen IP güvenilir kaynaktan mı?</label></li></ul><details><summary>Kendini değerlendir · yanıtları göster</summary><p>1) Yerleşik limiter neden distributed değil? In-process state. 2) INCR ardından EXPIRE riski? Aradaki crash süresiz key bırakabilir. 3) User identity ne zaman kullanılabilir? Authentication sonrasında. 4) 429 ne sunmalı? Retry-After, doğru reset zamanı.</p></details><h3>Sık yapılan hatalar</h3><ul><li>UseRateLimiter’ı authentication öncesi koymak → authenticated partition için sonrasına al.</li><li>EXPIRE’ı her istekte resetlemek → pencereyi kayan şekilde uzatabilir; yalnız ilk sayımda atomik TTL.</li><li>Redis down iken fail-open varsaymak → endpoint riskine göre fail policy belirle.</li></ul></section>
+<nav class="pager"><a href="01-shopping-cart.html">← Önceki: Sepet</a><a href="03-jwt-token-revocation.html">Sonraki: JWT Revocation →</a></nav><footer class="footer">Mevcut limit kaydı doğrulandı; aktif değildir. Redis katmanı öneridir.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

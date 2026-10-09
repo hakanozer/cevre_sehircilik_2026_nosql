@@ -1,0 +1,160 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>03 · JWT Token Revocation</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 03 / 12</span><span class="badge">İleri</span><span class="badge">55 dakika</span></p><h1>JWT Token Revocation</h1><p>Logout sonrası stateless access token’ı nasıl reddederiz; merkezi kontrolün maliyetini ve güvenlik kararını tartışın.</p><span class="tag">Mevcut projeden doğrulandı: AuthController.Login · Program.cs · ErrorHandlerMiddleware</span></header>
+<section class="card"><h2>A · Gerçek hayat problemi</h2><p>JWT imzası ve süresi geçerli kaldıkça logout tek başına token’ı geçersiz kılmaz. Çalınan token süresi dolana kadar kullanılabilir. Bir instance’ın belleğindeki denylist diğer instance’a yayılmaz; restart’ta kaybolur. Redis’e JTI denylist eklemek her istekte merkezi erişim getirir.</p><h2>B · Bu uygulamada Redis neden?</h2><p>AuthController.Login 1 saatlik HmacSha256Signature token oluşturur; claims NameIdentifier, Name ve role’dur; JTI yok. Program.cs issuer/audience validasyonunu kapatmış, signing key doğrulaması açık; token ömrü TokenValidationParameters varsayılan lifetime kontrolüne dayanır. Logout ve revocation endpoint’i yok. Redis String + TTL geçici denylist sağlar; SQLite token oturum tablosu da alternatiftir ancak sorgu/temizlik ister. Redis kaydı eviction veya veri kaybıyla düşebilir ve tek başına mutlak iptal garantisi değildir. Fail-closed erişilebilirliği azaltır; fail-open iptal kontrolünü devre dışı bırakır. Karar endpoint riskine göre açıkça yazılmalı.</p></section>
+<section class="card"><h2>C · Özellikler ve key tasarımı</h2><div class="cols"><div class="box"><h3>JTI + String key</h3><p>Her token’a rastgele benzersiz jti ekle; denylist’te yalnız o tanımlayıcıyı sakla, token’ın kendisini değil.</p></div><div class="box"><h3>TTL = kalan ömür</h3><p>Exp-now kadar TTL ile geçersiz token kaydı doğal olarak temizlenir. TTL fiziksel silinmenin kesin anı değildir.</p></div><div class="box"><h3>OnTokenValidated</h3><p>İmza/lifetime kontrollerinden sonra denylist kontrolü; Redis bağımlılığı her yetkili API isteğine taşınır.</p></div></div><table><tr><th>Key</th><th>Tip</th><th>TTL / ayrım</th><th>Risk</th></tr><tr><td><code>auth:revoked:{jti}</code></td><td>String value 1</td><td>Token kalan ömrü; token bazlı</td><td>JTI gizli token değeri değildir ancak log’a yazmamak ve ACL/eviction planlamak gerekir. E-posta/username key’de yok.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Logout ve kontrol akışı <b>Önerilen geliştirme</b>; mevcut login rotası doğrulanmıştır. JWT claim’lerinde NameIdentifier/Name/Role kullanın. Mevcut roller Product ve Note; logout için authenticated user kuralı yeterli, Admin/User rolü eklenmiş gibi varsaymayın.</p><div class="scroll"><table><tr><th>Metot / URL</th><th>Örnek ve yanıtlar</th><th>Redis / SQLite</th></tr><tr><td>POST <code>api/auth/login</code><br><span class="tag">Mevcut</span></td><td>Username e-posta, Password, City zorunlu. 200 token/user; 400 model hatası, mevcutta 404 user-not-found / 401 parola yanlış.</td><td>SQLite User auth; öneride token’a jti. Mevcut response parola alanını null’lar.</td></tr><tr><td>POST <code>api/auth/logout</code><br><span class="proposal">Önerilen</span></td><td>Bearer token → 204; token missing/invalid 401; revocation store unavailable 503 fail-closed policy.</td><td>JTI key’e SET EX kalan ömür; SQLite değişikliği yok. Logout yalnız mevcut token’ı iptal eder.</td></tr><tr><td>GET <code>api/auth/session</code><br><span class="proposal">Önerilen</span></td><td>Bearer token → 200 <code>{"active":true}</code>; revoked 401.</td><td>OnTokenValidated GET revoked key. Refresh token rotasyonu ayrı persistent tasarım ister.</td></tr></table></div></section>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> JTI, logout route, revocation service ve JWT event’i mevcutta yoktur. JTI eklenene kadar revoke endpoint’i çalışmayacaktır; adımları sırasıyla uygulayın.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, JwtBearer 9.0.2, StackExchange.Redis 3.3.1, singleton multiplexer ve JWT signing key configuration key’i mevcut. Secret value’ları appsettings’e/HTML’e kopyalamayın. Redis local değilse <code>docker compose up -d redis</code>. Yeni paket gerekmez.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> `SaveToken=true` veya imza doğrulandı diye token logout sonrası iptal oluyor sanmak. JTI denylist ayrı kontrol ve her doğrulamada merkezi Redis bağımlılığı getirir.</p>
+<h3>2. Model ve veritabanı</h3><p>Kalıcı token/session entity bu örnekte gerekmiyor: revocation kaydı kısa ömürlüdür ve Redis TTL’i token expiry’ye bağlanır. DbSet/table/migration yok; EF komutu çalıştırılmaz. Daha güçlü audit/kalıcı logout ihtiyacı varsa relational session store ayrıca tasarlanmalıdır; Redis tek başına kalıcılık garantisi değildir.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> JTI denylist’ini süresiz key olarak tutmak. Key TTL’i token’ın kalan ömrünü aşmamalıdır.</p>
+<h3>3. DTO</h3><p>Logout request body’si gerekmez; token zaten Bearer header’dadır. Response da <code>204 No Content</code> olduğundan yeni DTO sınıfı gerekmiyor. Bu, request’te client JTI alıp başka token iptal ettirme riskini önler.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> İptal edilecek JTI’yi request body’den almak. Yalnızca doğrulanmış mevcut token’ın claim’ini kullanın.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/TokenRevocationRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public static class TokenRevocationRedisKeys
+{
+    public static string ForJti(string jti)
+    {
+        if (string.IsNullOrWhiteSpace(jti)
+            || jti.Length &gt; 128
+            || jti.Any(char.IsControl))
+            throw new ArgumentException("Invalid token identifier.", nameof(jti));
+        return $"auth:revoked:{jti}";
+    }
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Raw JWT’yi key’e yazmak veya loglamak. Yalnız JTI kullanın; Bearer token ve Authorization header’ını asla loglamayın.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/ITokenRevocationService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Threading.Tasks;
+
+namespace RestApi.Services;
+
+public interface ITokenRevocationService
+{
+    Task RevokeAsync(string jti, DateTime expiresUtc);
+    Task&lt;bool&gt; IsRevokedAsync(string jti);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/TokenRevocationService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Threading.Tasks;
+using StackExchange.Redis;
+
+namespace RestApi.Services;
+
+public sealed class TokenRevocationService(IConnectionMultiplexer multiplexer)
+    : ITokenRevocationService
+{
+    public async Task RevokeAsync(string jti, DateTime expiresUtc)
+    {
+        var remaining = expiresUtc - DateTime.UtcNow;
+        if (remaining &lt;= TimeSpan.Zero) return;
+        await multiplexer.GetDatabase().StringSetAsync(
+            TokenRevocationRedisKeys.ForJti(jti), "1", remaining);
+    }
+
+    public Task&lt;bool&gt; IsRevokedAsync(string jti) =&gt;
+        multiplexer.GetDatabase().KeyExistsAsync(
+            TokenRevocationRedisKeys.ForJti(jti));
+}</code></pre><p>Redis exception yutulmaz. Authorization pipeline’daki caller fail-closed olarak token validation’ı reddeder; revocation key’i kalan token süresi kadar yaşar. TTL tam fiziksel silinme anı garantisi değildir.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis timeout’unda <code>false</code> (not revoked) dönmek. Bu, erişilemeyen güvenlik kontrolünü sessizce devre dışı bırakır.</p>
+<h3>6. Program.cs — DI ve JWT validation event’i</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (using)</b> · Önerilen geliştirme</p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;</code></pre><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (<code>AddDbContext</code> kaydından sonra)</b> · Önerilen geliştirme</p><pre><button class="copy">Kopyala</button><code>builder.Services.AddScoped&lt;ITokenRevocationService, TokenRevocationService&gt;();</code></pre><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (mevcut <code>AddJwtBearer</code> options bloğunun içine)</b> · Önerilen geliştirme</p><pre><button class="copy">Kopyala</button><code>options.MapInboundClaims = false;
+options.Events = new JwtBearerEvents
+{
+    OnTokenValidated = async context =&gt;
+    {
+        var jti = context.Principal?.FindFirst(
+            System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+        if (string.IsNullOrWhiteSpace(jti))
+        {
+            context.Fail("Required token identifier is missing.");
+            return;
+        }
+
+        var service = context.HttpContext.RequestServices
+            .GetRequiredService&lt;ITokenRevocationService&gt;();
+        try
+        {
+            if (await service.IsRevokedAsync(jti))
+                context.Fail("Token has been revoked.");
+        }
+        catch (StackExchange.Redis.RedisException)
+        {
+            // Fail closed: authentication fails; never skip the check.
+            context.Fail("Token revocation service is unavailable.");
+        }
+    }
+};</code></pre><p>`MapInboundClaims = false` keeps registered jti/exp names predictable; NameIdentifier/Name/Role claims are emitted as ClaimTypes URI claims and remain available. Enabling this event also rejects older valid tokens without JTI: deploy JTI-producing login first, allow old tokens to expire, then enforce revocation. Existing Authentication → Authorization order remains; no middleware is added. Redis outage fails closed (usually 401); separate 503 requires authentication failure response customization.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> `OnTokenValidated` event’i kurup exception’ı yutmak. Güvenlik açısından sessiz bypass yok; fail-closed availability maliyetini kabul edin ve gözlemleyin.</p>
+<h3>7. Auth token claim’i ve logout controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/AuthController.cs</code> (<code>SecurityTokenDescriptor.Subject</code> içine claim ekle) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>new Claim(
+    System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti,
+    Guid.NewGuid().ToString("N"))</code></pre><p>Bunu mevcut Subject claim array’ine NameIdentifier ve Name yanında ekleyin; yeni token’larda jti olur. Eski, jti’siz token’lar revoke akışına geçmeden önce expire olmalı veya kontrollü şekilde reddedilmelidir.</p><p><b>Dosya yolu: <code>RestApi/Controllers/LogoutController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Globalization;
+using System.IdentityModel.Tokens.Jwt;
+    using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Services;
+using StackExchange.Redis;
+
+namespace RestApi.Controllers;
+
+[ApiController]
+[Route("api/auth")]
+[Authorize]
+public sealed class LogoutController(ITokenRevocationService revocations)
+    : ControllerBase
+{
+    [HttpPost("logout")]
+    public async Task&lt;IActionResult&gt; Logout()
+    {
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+            || userId &lt;= 0)
+            return Unauthorized();
+        var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+        var exp = User.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+        if (string.IsNullOrWhiteSpace(jti)
+            || !long.TryParse(exp, NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var seconds))
+            return Unauthorized();
+
+        try
+        {
+            await revocations.RevokeAsync(
+                jti, DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime);
+            return NoContent();
+        }
+        catch (RedisException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503, Title = "Token revocation store unavailable."
+            });
+        }
+    }
+}</code></pre><p>Logout 204; token/JTI/exp eksikse 401; Redis write hatası 503. Rol eklenmiyor; yalnız authenticated caller kendi bearer token’ını revoke eder.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Logout rotasını AllowAnonymous yapmak ya da body’deki başka kullanıcının token’ını iptal etmek. Yalnız valid JWT principal’ı ve onun JTI claim’i kullanılmalıdır.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · Mevcut login endpoint’i</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen logout ve protected product endpoint’leri</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/auth/logout \
+  -H "Authorization: Bearer $TOKEN"
+curl -i http://localhost:5120/api/product \
+  -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli SCAN 0 MATCH 'auth:revoked:*' COUNT 100
+unset TOKEN LOGIN_USER</code></pre><p>Logout 204; Redis SCAN matched JTI key shows remaining TTL. Logout sonrası aynı token ile protected product GET 401 olmalı (revoked token authenticate edilmemelidir). Redis outage sırasında authentication fails closed; endpoint auth layer may return 401 rather than controller 503. Hiçbir token/jti gerçek değerini rapora/log’a koymayın.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Postman/curl history, console veya access log’a bearer token bırakmak. Mevcut middleware tüm header’ları logluyor; güvenli test ortamı kullanın ve production’da Authorization’ı redakte edin.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">JTI her yeni token’da unique ve logout principal’dan alınıyor.</label></li><li><label><input type="checkbox">Revocation key TTL token expiry’ye göre.</label></li><li><label><input type="checkbox">Redis outage fail-closed, sessiz bypass yok.</label></li><li><label><input type="checkbox">Bearer token/JTI/parola log’lanmıyor.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<section class="card"><h2>E · Adım adım ve .NET örneği</h2><ol><li><b>JTI üret:</b> SecurityTokenDescriptor.Subject’e Jti claim ekle (önerilen); doğrula, iki token JTI’ları ayrık. JTI mevcut değil.</li><li><b>Logout:</b> JWT’yi validate edip exp/jti oku; key TTL’ini kalan ömürden hesapla, non-positive ise yazma. Her token için kayıt.</li><li><b>Doğrulama:</b> AddJwtBearer OnTokenValidated içinde Redis sorgula; revoked olursa context.Fail. Redis exception için AuthenticationFailed event + kontrollü 503/error response; sessizce atlama.</li><li><b>Gözlem:</b> Header/token redaction; mevcut logger bütün header’ları yazar ve login parola türevlerini console’a çıkarır. Kod değiştirme bu eğitim kapsamı dışı.</li></ol><h3>Redis Komut Laboratuvarı</h3><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SET auth:revoked:example-jti 1 EX 3600
+EXISTS auth:revoked:example-jti
+TTL auth:revoked:example-jti
+DEL auth:revoked:example-jti</code></pre><p>Yalnızca sahte JTI kullanın. Gerçek bearer token, JTI veya anahtar secret’ını shell history/log’a koymayın.</p><h3>.NET örneği · önerilen TokenRevocationService.cs</h3><pre><button class="copy">Kopyala</button><code>public sealed class TokenRevocationService(IConnectionMultiplexer mux)
+{
+    public Task RevokeAsync(string jti, TimeSpan remaining) =&gt;
+        mux.GetDatabase().StringSetAsync(
+            $"auth:revoked:{jti}", "1", remaining);
+
+    public Task&lt;bool&gt; IsRevokedAsync(string jti) =&gt;
+        mux.GetDatabase().KeyExistsAsync($"auth:revoked:{jti}");
+}
+// DI: AddScoped&lt;TokenRevocationService&gt;()
+// Register it in JwtBearerEvents.OnTokenValidated; on Redis failure,
+// fail the authentication request explicitly according to policy.</code></pre><p>Örnek minimaldir: jti null/empty, remaining TTL, Redis timeout mapping, exception propagation ve telemetry üretim kodunda ele alınmalıdır.</p></section>
+<section class="card"><h2>F · İstek akışı, production kararları</h2><div class="flow">HTTP → ErrorHandlerMiddleware (mevcut header log riski) → GlobalMiddleware → Authentication (imza/lifetime + önerilen Redis JTI kontrolü) → Authorization (Product/Note) → Controller → SQLite/Redis</div><div class="cols"><div class="box"><b>Başarılı:</b> imza/lifetime doğru, JTI denylist’te değil → authorization → controller.</div><div class="box"><b>Başarısız:</b> revoked → authentication fail/401. Redis erişilemiyor → güvenlik açısından sessiz geçiş yok; belgeli 503 fail-closed veya sınırlı acil durum policy.</div></div><ul><li>Revocation kontrolü stateless doğrulamaya merkezi gecikme ve availability bağımlılığı ekler.</li><li>Key eviction/restart/persistence davranışı güvenlik kontrolünü zayıflatabilir; eviction policy denetlenmeli.</li><li><code>SaveToken=true</code> ve ErrorHandlerMiddleware header döngüsüyle birlikte bearer token log’a yazılabilir; log erişimi de sır yönetimidir.</li><li>Issuer/audience doğrulama mevcutta kapalıdır; bu modül bunları varmış gibi sunmaz, prod’da ayrı ele alınmasını önerir.</li></ul><h2>G · Öğrenme çıktıları / önkoşul</h2><p>JTI, kalan TTL, token denylist ve merkezi kontrolün ödünleşimi anlaşılır. Önkoşul Modül 02’de Redis outage policy; sonraki Modül 06 OTP’de hassas veri koruması.</p><h2>H · Uygulama görevleri</h2><ol><li>Token descriptor’a JTI ekle. <details><summary>İpucu</summary>JwtRegisteredClaimNames.Jti için kriptografik rastgele ID üret; mevcut kodda yok.</details></li><li>Logout endpoint’i ile kalan ömür kadar denylist kaydı oluştur. <details><summary>İpucu</summary>Exp ile UTC now farkını hesapla; negatif sürede kayıt yazma.</details></li><li>Redis’i erişilemez yapıp protected endpoint davranışını doğrula. <details><summary>İpucu</summary>OnTokenValidated failure exception’ını sessizce yutma; fail-closed seçimi ve 503 dönüşümü tasarla.</details></li></ol><h2>I · Production checklist / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">Her token’da unique JTI ve kalan ömür TTL var mı?</label></li><li><label><input type="checkbox">OnTokenValidated Redis outage davranışı belirli mi?</label></li><li><label><input type="checkbox">Token ve parola log/response’dan çıkarılmış mı?</label></li><li><label><input type="checkbox">Redis eviction/persistence güvenlik gereksinimine uygun mu?</label></li></ul><details><summary>Kendini değerlendir · yanıtları göster</summary><p>1) JWT logout neden otomatik iptal değildir? İmza/süre geçerliliği devam eder. 2) JTI neden? Tek token’ı sınırlı anahtarla ayırt etmek. 3) TTL? En fazla token’ın kalan ömrü. 4) Redis down? Fail-open kontrolü atlar; seçim belgelenmeli. 5) Revocation bedeli? Stateful merkezi bağımlılık.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Token’ın tamamını denylist key yapmak → yalnız JTI kullan.</li><li>Her kayda sabit bir saat TTL → token kalan ömrünü hesapla.</li><li>Redis exception’ında “not revoked” dönmek → güvenlik kararını fail policy ile açık ver.</li><li>Bearer header veya token’ı loglamak → redaction ve hassas veri politikası uygula.</li></ul></section>
+<nav class="pager"><a href="02-distributed-rate-limiting.html">← Önceki: Rate Limiting</a><a href="04-notification-center.html">Sonraki: Notification Center →</a></nav><footer class="footer">Tüm revocation endpoint’leri geliştirme önerisidir.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

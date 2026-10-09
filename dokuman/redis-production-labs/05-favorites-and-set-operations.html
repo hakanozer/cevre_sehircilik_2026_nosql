@@ -1,0 +1,197 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>05 · Favorites and Set Operations</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 05 / 12</span><span class="badge">Orta</span><span class="badge">45 dakika</span></p><h1>Favorites &amp; Set Operations</h1><p>Ürün favorilerini idempotent küme işlemleriyle yönetin ve cache ile kalıcı ilişkiyi ayırın.</p><span class="proposal">Önerilen geliştirme · Favori entity/API yok</span></header>
+<section class="card"><h2>A · Problem / B · Neden Redis?</h2><p>Favori butonuna tekrarlı tıklama duplicate satır üretmemeli. Uygulama belleği instance değişiminde farklı görünüm verir; her profil açılışında SQLite sorgusu maliyetlidir. Redis Set’te SADD aynı üye için tekrarda duplicate oluşturmaz, SISMEMBER membership kontrolü ve SINTER ortak beğeniler sağlar. SQLite unique (UserId, ProductId) index’i kalıcı son savunmadır. Redis Set tek başına kalıcı doğruluk değildir; cache miss/invalidation ve evictions düşünülmelidir. Çok büyük kümelerde memory/membership maliyeti ölçülür. SQLite multi-instance write sınırı vardır.</p><h2>C · Özellikler + key</h2><div class="cols"><div class="box"><b>SADD / SREM:</b> favori ekle/kaldır; tekrar add güvenlidir.</div><div class="box"><b>SISMEMBER:</b> kullanıcı bu ürünü favoriledi mi.</div><div class="box"><b>SINTER:</b> iki kullanıcının ortak ürünleri; büyük kümelerde pahalı olabilir.</div></div><table><tr><th>Key</th><th>Tip / örnek</th><th>TTL / kullanıcı ayrımı / not</th></tr><tr><td><code>favorite:user:{userId}:products</code></td><td>Set productId strings {"12","19"}</td><td>Cache ise DB’den yeniden kurulabilir; süre/eviction bilinçli. userId JWT claim’i, username/e-posta yok. Kalıcı unique relation SQLite.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint’ler</h2><p>API’lerin tümü <b>Önerilen geliştirme</b>. Mevcut <code>GET api/product</code> ürünleri verir; sınıf düzeyinde Product rolü gerekir. Favori controller’a authenticated owner rule önerilir; yeni Favorite/Admin rol mevcut değildir.</p><div class="scroll"><table><tr><th>Metot / URL</th><th>Örnek / yanıt / hata</th><th>Redis / SQLite</th></tr><tr><td>GET <code>api/favorites</code></td><td>→ 200 <code>{"productIds":[12,19]}</code>; 401.</td><td>SMEMBERS; cache miss SQLite Favorite table.</td></tr><tr><td>PUT <code>api/favorites/12</code></td><td>→ 204; unknown product 404; unauthorized 401.</td><td>SADD; SQLite insert with unique (UserId,ProductId).</td></tr><tr><td>DELETE <code>api/favorites/12</code></td><td>→ 204 even repeat; database relation remove.</td><td>SREM; SQLite delete. Product delete event must remove stale relation/index.</td></tr></table></div></section>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Favori ilişkisi ve API mevcut değil. SQLite composite unique constraint kalıcı doğruluk sağlar; Redis Set yalnız rebuild edilebilir hızlandırıcıdır.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, EF Core SQLite, StackExchange.Redis 3.3.1 ve singleton multiplexer var; ek paket gerekmez. Başlat: <code>docker compose up -d redis</code>.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis Set’i tek kalıcı veri kaynağı yapmak. Redis restart/eviction olursa relation’lar kaybolur; SQLite authoritative kalır.</p>
+<h3>2. Model ve migration</h3><p><b>Dosya yolu: <code>RestApi/Models/Favorite.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace RestApi.Models;
+
+public sealed class Favorite
+{
+    [Key]
+    public int Id { get; set; }
+    [Required]
+    public int UserId { get; set; }
+    [Required]
+    public int ProductId { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    [ForeignKey(nameof(UserId))]
+    public User User { get; set; } = null!;
+    [ForeignKey(nameof(ProductId))]
+    public Product Product { get; set; } = null!;
+}</code></pre><p>Add these navigation collections to existing <code>User</code> and <code>Product</code> classes, or omit the collection properties and retain the FK navigations above:</p><p><b>Dosya yolu: <code>RestApi/Data/ApplicationDbContext.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>public DbSet&lt;Favorite&gt; Favorites { get; set; }
+
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+    modelBuilder.Entity&lt;Favorite&gt;()
+        .HasIndex(f =&gt; new { f.UserId, f.ProductId })
+        .IsUnique();
+}</code></pre><p>If <code>OnModelCreating</code> already exists, merge only the entity configuration into it. From repository root:</p><p><b>Dosya/konum: Terminal</b></p><pre><button class="copy">Kopyala</button><code>dotnet ef migrations add AddFavorites --project RestApi
+dotnet ef database update --project RestApi</code></pre><p>Expect <code>Favorites</code> table, UserId/ProductId foreign keys and unique composite index. Verify generated migration before applying it; rollback with <code>dotnet ef database update &lt;previous-migration&gt; --project RestApi</code>.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Unique index’i yalnız Redis’te güvenceye almak. Concurrent writes can race; only database constraint guarantees durable uniqueness.</p>
+<h3>3. DTOs</h3><p>Only the response DTO is needed; product ID comes from route and user ID from JWT, never from a body.</p><p><b>Dosya yolu: <code>RestApi/Models/dto/FavoritesResponseDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Collections.Generic;
+
+namespace RestApi.Models.Dto;
+
+public sealed record FavoritesResponseDto(IReadOnlyList&lt;int&gt; ProductIds);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> DTO’da UserId kabul etmek; authenticated user could then write to another owner’s collection.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/FavoriteRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public static class FavoriteRedisKeys
+{
+    public static string ForUser(int userId) =&gt;
+        userId &gt; 0 ? $"favorite:user:{userId}:products"
+                    : throw new ArgumentOutOfRangeException(nameof(userId));
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> User name/email’i key içine koyup PII yaymak. Use numeric, claim-derived user ID.</p>
+<h3>5. Servis</h3><p><b>Dosya yolu: <code>RestApi/Services/IFavoriteService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace RestApi.Services;
+
+public interface IFavoriteService
+{
+    Task&lt;IReadOnlyList&lt;int&gt;&gt; GetAsync(int userId, CancellationToken ct);
+    Task&lt;bool&gt; AddAsync(int userId, int productId, CancellationToken ct);
+    Task RemoveAsync(int userId, int productId, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/FavoriteService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models;
+using StackExchange.Redis;
+
+namespace RestApi.Services;
+
+public sealed class FavoriteService(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer)
+    : IFavoriteService
+{
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+
+    public async Task&lt;IReadOnlyList&lt;int&gt;&gt; GetAsync(int userId, CancellationToken ct)
+    {
+        var key = (RedisKey)FavoriteRedisKeys.ForUser(userId);
+        var cached = await _redis.SetMembersAsync(key);
+        if (cached.Length &gt; 0)
+            return cached.Select(v =&gt; int.TryParse(v.ToString(), out var id) ? id : 0)
+                .Where(id =&gt; id &gt; 0).Order().ToArray();
+
+        var ids = await context.Favorites.AsNoTracking()
+            .Where(f =&gt; f.UserId == userId).Select(f =&gt; f.ProductId).ToListAsync(ct);
+        if (ids.Count &gt; 0)
+            await _redis.SetAddAsync(key, ids.Select(id =&gt; (RedisValue)id.ToString()).ToArray());
+        return ids;
+    }
+
+    public async Task&lt;bool&gt; AddAsync(int userId, int productId, CancellationToken ct)
+    {
+        if (!await context.Products.AnyAsync(p =&gt; p.Id == productId, ct)) return false;
+        var exists = await context.Favorites.AnyAsync(
+            f =&gt; f.UserId == userId &amp;&amp; f.ProductId == productId, ct);
+        if (!exists)
+        {
+            context.Favorites.Add(new Favorite { UserId = userId, ProductId = productId });
+            try { await context.SaveChangesAsync(ct); }
+            catch (DbUpdateException)
+            {
+                if (!await context.Favorites.AnyAsync(
+                    f =&gt; f.UserId == userId &amp;&amp; f.ProductId == productId, ct))
+                    throw;
+                // A concurrent request inserted the same relation; PUT remains idempotent.
+            }
+        }
+        await _redis.SetAddAsync(FavoriteRedisKeys.ForUser(userId), productId.ToString());
+        return true;
+    }
+
+    public async Task RemoveAsync(int userId, int productId, CancellationToken ct)
+    {
+        var row = await context.Favorites.SingleOrDefaultAsync(
+            f =&gt; f.UserId == userId &amp;&amp; f.ProductId == productId, ct);
+        if (row is not null)
+        {
+            context.Favorites.Remove(row);
+            await context.SaveChangesAsync(ct);
+        }
+        await _redis.SetRemoveAsync(FavoriteRedisKeys.ForUser(userId), productId.ToString());
+    }
+}</code></pre><p>Errors are not swallowed: Redis outage propagates through default error handling (500) after DB may already have committed. Cache repair is safe by invalidating the per-user key and letting GET rebuild. For production, catch <code>RedisException</code> in controller and return documented 503 with the “DB may have committed” caveat; do not pretend transaction rollback.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Retrying after Redis error without considering persisted relation. Make PUT idempotent, preserve DB unique index and repair cache from SQLite.</p>
+<h3>6. Program.cs DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · using lines, then immediately after existing DbContext registrations · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IFavoriteService, FavoriteService&gt;();</code></pre><p>No middleware change required; authentication/authorization middleware already exists.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> FavoriteService’i singleton kaydetmek; EF Core DbContext is scoped.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/FavoritesController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+
+namespace RestApi.Controllers;
+
+[ApiController]
+[Route("api/favorites")]
+[Authorize]
+public sealed class FavoritesController(IFavoriteService service) : ControllerBase
+{
+    private bool TryUserId(out int id) =&gt;
+        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out id) &amp;&amp; id &gt; 0;
+
+    [HttpGet]
+    public async Task&lt;IActionResult&gt; Get(CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        return Ok(new FavoritesResponseDto(await service.GetAsync(userId, ct)));
+    }
+
+    [HttpPut("{productId:int}")]
+    public async Task&lt;IActionResult&gt; Add(int productId, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        if (productId &lt;= 0) return BadRequest();
+        return await service.AddAsync(userId, productId, ct) ? NoContent() : NotFound();
+    }
+
+    [HttpDelete("{productId:int}")]
+    public async Task&lt;IActionResult&gt; Remove(int productId, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        if (productId &lt;= 0) return BadRequest();
+        await service.RemoveAsync(userId, productId, ct);
+        return NoContent();
+    }
+}</code></pre><p>GET 200, PUT 204 / unknown product 404, DELETE 204 including repeat, invalid ID 400, unauthenticated 401. Existing roles are Product and Note; this endpoint deliberately allows every authenticated account rather than adding an imaginary role.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Yalnızca action’ı [Authorize] yapıp ownership’i service query’sinde unutmamak. Every DB operation filters with claim-derived userId.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · token güvenli şekilde istemciden girilir</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen endpoint doğrulaması</b></p><pre><button class="copy">Kopyala</button><code>curl -i http://localhost:5120/api/favorites -H "Authorization: Bearer $TOKEN"
+curl -i -X PUT http://localhost:5120/api/favorites/12 -H "Authorization: Bearer $TOKEN"
+curl -i http://localhost:5120/api/favorites -H "Authorization: Bearer $TOKEN"
+curl -i -X DELETE http://localhost:5120/api/favorites/12 -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli SMEMBERS favorite:user:YOUR_USER_ID:products
+unset TOKEN LOGIN_USER</code></pre><p>Expected GET <code>{"productIds":[]}</code> or current IDs; PUT existing product 204; second PUT remains 204 and DB has one relation; unknown product 404; DELETE 204. Redis SMEMBERS reflects IDs after first read/write. Substitute an actual Product ID and claim user ID; locate DB relation by querying SQLite for verification.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> ID 12’nin var olduğunu varsaymak ya da SCAN’i production’da kullanmak. Use a real product in local lab; production key inspection should use targeted tooling.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">SQLite unique index prevents duplicate favorites.</label></li><li><label><input type="checkbox">Only claim-derived owner IDs reach service methods.</label></li><li><label><input type="checkbox">Cache can be deleted and rebuilt from SQLite.</label></li><li><label><input type="checkbox">Redis outage/retry behavior is understood.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<section class="card"><h2>E · Adım adım + komut laboratuvarı</h2><ol><li>Add Favorite entity (UserId, ProductId) and composite unique index; migration using info.txt flow. Confirm duplicate rejected by DB even if cache stale.</li><li>FavoriteService uses multiplexer singleton; Get list from cache, DB rebuild on miss. Verify two app instances see same state.</li><li>Write DB then update cache; failure between steps needs invalidate/rebuild/outbox or treat cache as disposable. ProductController.Delete currently does not invalidate products:all; favorite cleanup is an additional consistency requirement.</li></ol><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SADD favorite:user:42:products 12 19
+SADD favorite:user:42:products 12
+SISMEMBER favorite:user:42:products 12
+SINTER favorite:user:42:products favorite:user:77:products
+SREM favorite:user:42:products 19
+SMEMBERS favorite:user:42:products</code></pre><p>SADD duplicate returns no second membership. Avoid KEYS * for production discovery; use SCAN only when operationally needed.</p><h3>.NET · Services/FavoriteService.cs</h3><pre><button class="copy">Kopyala</button><code>public sealed class FavoriteService(IConnectionMultiplexer mux)
+{
+    public Task&lt;bool&gt; AddAsync(int userId, int productId) =&gt;
+        mux.GetDatabase().SetAddAsync(
+            $"favorite:user:{userId}:products", productId.ToString());
+}</code></pre><p>Persist unique SQLite row in same service/repository pattern only if introduced; current controllers directly use DbContext and no repository exists. Register scoped service; don’t claim it already exists.</p></section>
+<section class="card"><h2>F · Akış ve Production notları</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → FavoriteController → SQLite relation + Redis Set read/cache</div><div class="cols"><div class="box"><b>Başarılı:</b> token claim’den userId → product exists → unique row stored → SADD → 204.</div><div class="box"><b>Hatalı:</b> Redis cache key evicted → SQLite rebuild; duplicate relational insert → unique conflict handled as idempotent result.</div></div><p>Set memory scales with cardinality; ortak SINTER costly for large user lists. Cache invalidate on Product delete/update; SQLite relation enforces integrity. Redis offline should not silently return empty favorites when that implies data loss. TTL is not precise deletion. Learned: set algebra, idempotent adds, persistence boundary. Prerequisite none; next Module 09 covers retries.</p><h2>Görevler / Checklist</h2><ol><li>Tekrarlı favorileme. <details><summary>İpucu</summary>SADD + composite unique index.</details></li><li>Ortak ürün setini göster. <details><summary>İpucu</summary>SINTER; limit user set size.</details></li><li>Ürünü silerken Redis/SQLite favorilerini tutarlı tut. <details><summary>İpucu</summary>FK policy, event/outbox, SREM/invalidation.</details></li></ol><ul class="checklist"><li><label><input type="checkbox">SQLite unique index migration var mı?</label></li><li><label><input type="checkbox">Kullanıcı id JWT’den geliyor mu?</label></li><li><label><input type="checkbox">Product delete cleanup ve cache rebuild tasarlandı mı?</label></li><li><label><input type="checkbox">Büyük Set boyutları/eviction ölçüldü mü?</label></li></ul><details><summary>Kendini değerlendir · yanıtlar</summary><p>1) SADD repeat? Üye yinelenmez. 2) Kalıcı unique index neden? Redis kaybı/yarışı DB’de durdurur. 3) Product delete etkisi? Favorite relation/key stale olur; cleanup gerekir. 4) SINTER ne zaman sakıncalı? Çok büyük kümelerde CPU/memory maliyeti.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Redis Set’i kalıcı kayıt sanmak → SQLite relation’a yaz.</li><li>Yalnız Redis’te duplicate önlemek → DB unique index ekle.</li><li>Product delete’i unutmak → foreign key ve key/index cleanup planla.</li></ul></section>
+<nav class="pager"><a href="04-notification-center.html">← Önceki: Notification Center</a><a href="06-otp-verification.html">Sonraki: OTP →</a></nav><footer class="footer">Bu modülde önerilen entity/endpoint henüz yoktur.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

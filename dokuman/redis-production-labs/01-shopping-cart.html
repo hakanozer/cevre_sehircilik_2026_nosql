@@ -1,0 +1,535 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>01 · Redis ile Sepet Yönetimi</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font: .9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 01 / 12</span><span class="badge">Orta</span><span class="badge">50 dakika</span></p><h1>Redis ile Sepet Yönetimi</h1><p>Geçici alışveriş durumu, kullanıcı sahipliği ve fiyatın otoritatif kaynağını doğru ayırın.</p><span class="proposal">Önerilen geliştirme</span></header>
+<section class="card"><h2>A · Gerçek hayat problemi</h2><p>Alışveriş sepeti uygulama belleğinde tutulursa yeniden başlatma veya başka API instance’ına yönlenme sepeti kaybettirir. Her kalem için her tıklamada kalıcı tabloyu güncellemek SQLite yazma trafiğini artırır. Kullanıcı sekmeleri aynı anda güncellediğinde miktarlar yarışabilir. Redis geçici sepet durumunu paylaşır; satın alma sırasında veritabanı fiyat/stok doğrulaması yapılır.</p>
+<h2>B · Bu uygulamada Redis neden?</h2><p>Sepet controller’ı mevcut değil. <code>Product.Id</code> ve <code>Product.Price</code> kaynak SQLite’tır; sepet yalnızca ürün ID’si ve miktarı saklar. Redis Hash alan güncellemelerini hızlı ve tek komut düzeyinde atomik yapar; TTL atıl sepetleri sınırlamaya yardım eder. Dictionary tek instance’a bağlıdır; SQLite kalıcı kayıt için iyi, hızlı sık değişen geçici durum için daha maliyetlidir. Redis dayanıklı sipariş kaydı, doğru fiyat/stok ya da SQLite ile dağıtık transaction garantisi vermez. SQLite çok instance’lı yazma yükü için sınırlıdır.</p></section>
+<section class="card"><h2>C · Redis özellikleri ve key tasarımı</h2><div class="cols"><div class="box"><h3>Hash</h3><p><code>productId → quantity</code> alanlarını tek sepet key’inde tutar; HINCRBY ile miktar artırımı atomiktir, ama ürün fiyatını sabitlemez.</p></div><div class="box"><h3>TTL</h3><p>Sepetin son yazımdan itibaren ömrünü sınırlar; ekleme/miktar güncelleme gibi yazmalarda EXPIRE yenilenir, GET TTL’i uzatmaz. Tam milisaniyede fiziksel silinme garantisi değildir.</p></div></div><div class="scroll"><table><tr><th>Key</th><th>Tip / örnek</th><th>TTL ve kapsam</th><th>Tutarlılık</th></tr><tr><td><code>cart:user:{userId}</code></td><td>Hash: {"12":"2","19":"1"}</td><td>Örn. politika ile 7 gün; TTL her güncellemede yenilenir; ID JWT’den.</td><td>Ürün ID’si ve miktar; fiyat/ürün varlığı SQLite’dan tekrar doğrulanır. PII key’de yok.</td></tr></table></div></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Tüm rotalar <b>Önerilen geliştirme</b>; mevcut ProductController dışında sepet endpoint’i yok. Önerilen <code>api/cart</code> controller’ı <code>ClaimTypes.NameIdentifier</code> kullanır. Mevcut roller yalnızca Product/Note; sepet için [Authorize] genel kimlik doğrulaması veya yeni Cart rolü ayrıca tasarlanmalı.</p><div class="scroll"><table><tr><th>Metot / URL</th><th>İstek → başarılı / hata</th><th>Redis / SQLite</th></tr><tr><td>GET <code>api/cart</code></td><td>İstek: Bearer JWT. 200: <code>{"items":[{"productId":12,"quantity":2,"unitPrice":24.5}]}</code>; 401/503.</td><td>HGETALL; ürün/fiyatlar SQLite Product’tan okuma, eksik ürün sepetten temizlenebilir.</td></tr><tr><td>POST <code>api/cart/items</code></td><td><code>{"productId":12,"quantity":1}</code> → 200 sepet. Hata: 400 miktar geçersiz, 404 ürün yok.</td><td>HINCRBY / HSET + EXPIRE; SQLite Product existence/price check.</td></tr><tr><td>DELETE <code>api/cart/items/12</code></td><td>İstek gövdesi yok → 204; ürün sepette yoksa idempotent 204.</td><td>HDEL; SQLite yazması gerekmez. Miktar için PUT <code>api/cart/items/12</code>, <code>{"quantity":3}</code> ile HSET.</td></tr></table></div><p><b>Yetki:</b> kullanıcı ID’sini URL/gövde/query’den alma. NoteController.Create’in mevcut gövde UserId davranışı karşı örnektir; JWT claim’den al ve kaynak sahipliğini kontrol et.</p></section>
+<section class="card"><h2>E · Adım adım uygulama</h2><ol><li><b>CartController + DTO:</b> authenticated user id claim’den parse edilir; neden: sepetler birbirine karışmasın. Doğrulama: farklı kullanıcı token’ları farklı key okur. Hata: client userId kabul etmek.</li><li><b>CartService:</b> <code>Services/</code> altına ekle, <code>IConnectionMultiplexer</code> singleton’ı DI’dan al. HINCRBY ile artım; HSET ile kesin miktar. Her istekte yeni multiplexer oluşturma.</li><li><b>Fiyatı birleştir:</b> Redis hash’inden ID/miktar al, SQLite Products’tan fiyat al. Doğrulama: ürün fiyatını değiştirince cart GET yeni fiyatı gösterir. Hata: fiyatı cache’te otoritatif sanmak.</li><li><b>Test et:</b> iki eşzamanlı artım sonrası beklenen adet; TTL bitiş/yenileme; ürün silinmesi; Redis kesintisi. SQLite ve Redis arasında transaction olmadığını göz önünde tut.</li></ol></section>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p>Bu rehber yeni sepet özelliğini RestApi içine uçtan uca eklemek için hazırlanmıştır. Tüm yeni dosyalar ve kayıtlar <b>Önerilen geliştirme</b>dir; API kaynak kodu bu eğitim sırasında değiştirilmez. Her kod bloğunun hemen üstünde dosya/konum ve durum etiketi verilmiştir.</p>
+<div class="note"><b>Mevcut projeden doğrulandı:</b> Proje .NET 9’dur; namespace kökü <code>RestApi</code>; <code>Program.cs</code> SQLite + EF Core’u <code>ApplicationDbContext</code> ile kaydeder ve bir adet singleton <code>IConnectionMultiplexer</code> oluşturur. <code>Product</code> modeli yalnızca Id, Name, Price tutar; stok/sepet modeli veya Cart endpoint’i yoktur. Login claim’lerinde <code>ClaimTypes.NameIdentifier</code> user ID’dir. Cart için yalnızca <code>[Authorize]</code> önerilir; mevcut Product rolünü tüm kullanıcılar için varsaymayın.</div>
+<h3>1. Hazırlık — paketler ve yapılandırma</h3><p><b>Mevcut projeden doğrulandı:</b> <code>RestApi/RestApi.csproj</code> içinde <code>StackExchange.Redis 3.3.1</code>, <code>Microsoft.EntityFrameworkCore.Sqlite 9.0.2</code>, EF Design/Tools paketleri var. <code>Program.cs</code> içinde <code>Redis:ConnectionString</code> ile singleton multiplexer; appsettings’te Redis ve SQLite bağlantı anahtarları tanımlı. Gerçek gizli değerleri kopyalamayın. Yeni NuGet paketi kurmayın. Redis container çalışmıyorsa repository root’tan başlatın:</p><p><b>Dosya/konum: Terminal (repository root) · Mevcut docker-compose.yaml servisi</b></p><pre><button class="copy">Kopyala</button><code>docker compose up -d redis</code></pre><p><code>dotnet ef</code> komutu makinede yoksa mevcut EF Tools sürümüyle uyumlu CLI’ı kurun: <code>dotnet tool install --global dotnet-ef --version 9.0.2</code>. Bu sepet için migration gerekmiyor.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Her HTTP isteğinde yeni <code>ConnectionMultiplexer</code> oluşturmak; mevcut singleton’ı yeniden kullanın. <code>IDistributedCache</code> paketi yüklü diye kayıtlı olduğunu varsaymayın; bu uygulamada Cart örneği doğrudan StackExchange.Redis kullanır.</p>
+<h3>2. Model ve veritabanı — yeni entity gerekmiyor</h3><p><b>Mevcut projeden doğrulandı:</b> Sepet geçici state olarak Redis Hash’inde, yalnızca ProductId ve quantity ile saklanacak; fiyatın kaynağı mevcut <code>Product</code> entity’si ve SQLite’tır. Bu nedenle Cart entity, DbSet veya migration eklenmez; beklenen yeni tablo yoktur. SQLite’taki Products tablosu okunur, sepet için kalıcı yazım yapılmaz. Dolayısıyla bu modül için <code>dotnet ef migrations add</code> ve <code>dotnet ef database update</code> çalıştırmayın. İleride sipariş/sepet geçmişi kalıcı istenirse ayrı model ve migration tasarlanmalıdır.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis sepetini stok rezervasyonu veya sipariş kaydı sanmak. <code>Product</code> içinde Stock alanı yoktur; fiyat/stok doğruluğu satın alma sırasında ayrı iş akışı ister.</p>
+<h3>3. DTO’lar — istemciden userId kabul etmeyin</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/AddCartItemRequestDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+
+namespace RestApi.Models.Dto;
+
+public sealed class AddCartItemRequestDto
+{
+    [Range(1, int.MaxValue)]
+    public int ProductId { get; init; }
+
+    [Range(1, 99)]
+    public int Quantity { get; init; }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/UpdateCartItemRequestDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+
+namespace RestApi.Models.Dto;
+
+public sealed class UpdateCartItemRequestDto
+{
+    [Range(1, 99)]
+    public int Quantity { get; init; }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/CartResponseDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Collections.Generic;
+
+namespace RestApi.Models.Dto;
+
+public sealed class CartItemResponseDto
+{
+    public int ProductId { get; init; }
+    public int Quantity { get; init; }
+    public decimal UnitPrice { get; init; }
+    public decimal LineTotal { get; init; }
+}
+
+public sealed class CartResponseDto
+{
+    public IReadOnlyList&lt;CartItemResponseDto&gt; Items { get; init; } =
+        Array.Empty&lt;CartItemResponseDto&gt;();
+
+    public decimal Total { get; init; }
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Request DTO’ya <code>UserId</code> eklemek veya response’ta client’ın gönderdiği fiyatı kullanmak. Kullanıcı claim’den; fiyat SQLite’taki Product’tan gelmelidir.</p>
+<h3>4. Redis key yardımcısı — tek üretim noktası</h3><p><b>Dosya yolu: <code>RestApi/Services/CartRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public static class CartRedisKeys
+{
+    public static string ForUser(int userId)
+    {
+        if (userId &lt;= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(userId));
+        }
+
+        return $"cart:user:{userId}";
+    }
+}</code></pre><p>Key standardı <code>cart:user:{userId}</code>; e-posta/Username veya token hiçbir zaman key’e konmaz.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Key’i her controller/service içinde elle farklı biçimlerde kurmak. Aynı kullanıcının sepeti tüm endpoint’lerde aynı helper’dan üretilmelidir.</p>
+<h3>5. Servis katmanı — interface, hatalar ve tam uygulama</h3><p><b>Dosya yolu: <code>RestApi/Services/ICartService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+
+namespace RestApi.Services;
+
+public interface ICartService
+{
+    Task&lt;CartResponseDto&gt; GetAsync(int userId, CancellationToken cancellationToken);
+    Task&lt;CartResponseDto&gt; AddAsync(int userId, int productId, int quantity, CancellationToken cancellationToken);
+    Task&lt;CartResponseDto&gt; UpdateAsync(int userId, int productId, int quantity, CancellationToken cancellationToken);
+    Task RemoveAsync(int userId, int productId);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/CartExceptions.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public sealed class CartProductNotFoundException(int productId)
+    : Exception($"Product {productId} was not found.")
+{
+}
+
+public sealed class CartItemNotFoundException(int productId)
+    : Exception($"Product {productId} is not in the cart.")
+{
+}
+
+public sealed class CartQuantityLimitException()
+    : Exception("The maximum quantity for this product has been reached.")
+{
+}
+
+public sealed class CartStoreUnavailableException(Exception innerException)
+    : Exception("The cart store is unavailable.", innerException)
+{
+}
+
+public sealed class CartDataException(string message)
+    : Exception(message)
+{
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/CartService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+
+namespace RestApi.Services;
+
+public sealed class CartService : ICartService
+{
+    private static readonly TimeSpan CartTtl = TimeSpan.FromDays(7);
+    private readonly ApplicationDbContext _context;
+    private readonly IConnectionMultiplexer _multiplexer;
+
+    private const string AddScript = @"
+local current = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '0')
+if current + tonumber(ARGV[2]) &gt; tonumber(ARGV[4]) then return -1 end
+local quantity = redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return quantity";
+
+    private const string UpdateScript = @"
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1";
+
+    private const string RemoveScript = @"
+local removed = redis.call('HDEL', KEYS[1], ARGV[1])
+if redis.call('HLEN', KEYS[1]) == 0 then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return removed";
+
+    public CartService(
+        ApplicationDbContext context,
+        IConnectionMultiplexer multiplexer)
+    {
+        _context = context;
+        _multiplexer = multiplexer;
+    }
+
+    public async Task&lt;CartResponseDto&gt; GetAsync(
+        int userId, CancellationToken cancellationToken)
+    {
+        HashEntry[] entries;
+        var key = (RedisKey)CartRedisKeys.ForUser(userId);
+        var redis = _multiplexer.GetDatabase();
+
+        try
+        {
+            entries = await redis.HashGetAllAsync(key);
+        }
+        catch (RedisException exception)
+        {
+            throw new CartStoreUnavailableException(exception);
+        }
+
+        var quantities = new Dictionary&lt;int, int&gt;();
+        foreach (var entry in entries)
+        {
+            if (!int.TryParse(entry.Name.ToString(), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out var productId)
+                || productId &lt;= 0
+                || !int.TryParse(entry.Value.ToString(), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out var quantity)
+                || quantity &lt;= 0)
+            {
+                throw new CartDataException("Cart data contains an invalid product or quantity.");
+            }
+
+            quantities[productId] = quantity;
+        }
+
+        if (quantities.Count == 0)
+        {
+            return new CartResponseDto();
+        }
+
+        var productIds = quantities.Keys.ToArray();
+        var products = await _context.Products
+            .AsNoTracking()
+            .Where(product =&gt; productIds.Contains(product.Id))
+            .ToDictionaryAsync(product =&gt; product.Id, cancellationToken);
+
+        var items = new List&lt;CartItemResponseDto&gt;();
+        var staleFields = new List&lt;RedisValue&gt;();
+        foreach (var (productId, quantity) in quantities)
+        {
+            if (!products.TryGetValue(productId, out var product))
+            {
+                staleFields.Add(productId.ToString(CultureInfo.InvariantCulture));
+                continue;
+            }
+
+            items.Add(new CartItemResponseDto
+            {
+                ProductId = productId,
+                Quantity = quantity,
+                UnitPrice = product.Price,
+                LineTotal = product.Price * quantity
+            });
+        }
+
+        if (staleFields.Count &gt; 0)
+        {
+            try
+            {
+                await redis.HashDeleteAsync(key, staleFields.ToArray());
+            }
+            catch (RedisException exception)
+            {
+                throw new CartStoreUnavailableException(exception);
+            }
+        }
+
+        return new CartResponseDto
+        {
+            Items = items,
+            Total = items.Sum(item =&gt; item.LineTotal)
+        };
+    }
+
+    public async Task&lt;CartResponseDto&gt; AddAsync(
+        int userId, int productId, int quantity,
+        CancellationToken cancellationToken)
+    {
+        await EnsureProductExistsAsync(productId, cancellationToken);
+        var key = (RedisKey)CartRedisKeys.ForUser(userId);
+        long updatedQuantity;
+        try
+        {
+            updatedQuantity = (long)await _multiplexer.GetDatabase().ScriptEvaluateAsync(
+                AddScript,
+                new RedisKey[] { key },
+                new RedisValue[]
+                {
+                    productId.ToString(CultureInfo.InvariantCulture),
+                    quantity,
+                    (int)CartTtl.TotalSeconds,
+                    99
+                });
+        }
+        catch (RedisException exception)
+        {
+            throw new CartStoreUnavailableException(exception);
+        }
+
+        if (updatedQuantity &lt; 0)
+        {
+            throw new CartQuantityLimitException();
+        }
+
+        return await GetAsync(userId, cancellationToken);
+    }
+
+    public async Task&lt;CartResponseDto&gt; UpdateAsync(
+        int userId, int productId, int quantity,
+        CancellationToken cancellationToken)
+    {
+        await EnsureProductExistsAsync(productId, cancellationToken);
+        var key = (RedisKey)CartRedisKeys.ForUser(userId);
+        long updated;
+        try
+        {
+            updated = (long)await _multiplexer.GetDatabase().ScriptEvaluateAsync(
+                UpdateScript,
+                new RedisKey[] { key },
+                new RedisValue[]
+                {
+                    productId.ToString(CultureInfo.InvariantCulture),
+                    quantity,
+                    (int)CartTtl.TotalSeconds
+                });
+        }
+        catch (RedisException exception)
+        {
+            throw new CartStoreUnavailableException(exception);
+        }
+
+        if (updated == 0)
+        {
+            throw new CartItemNotFoundException(productId);
+        }
+
+        return await GetAsync(userId, cancellationToken);
+    }
+
+    public async Task RemoveAsync(int userId, int productId)
+    {
+        var key = (RedisKey)CartRedisKeys.ForUser(userId);
+        try
+        {
+            await _multiplexer.GetDatabase().ScriptEvaluateAsync(
+                RemoveScript,
+                new RedisKey[] { key },
+                new RedisValue[]
+                {
+                    productId.ToString(CultureInfo.InvariantCulture),
+                    (int)CartTtl.TotalSeconds
+                });
+        }
+        catch (RedisException exception)
+        {
+            throw new CartStoreUnavailableException(exception);
+        }
+    }
+
+    private async Task EnsureProductExistsAsync(
+        int productId, CancellationToken cancellationToken)
+    {
+        var exists = await _context.Products
+            .AsNoTracking()
+            .AnyAsync(product =&gt; product.Id == productId, cancellationToken);
+
+        if (!exists)
+        {
+            throw new CartProductNotFoundException(productId);
+        }
+    }
+}</code></pre><p>Bu servis Redis exception’larını açıkça <code>CartStoreUnavailableException</code>’a çevirir; controller 503 döndürür, sepeti sessizce boş göstermez. EF/SQLite hataları yutulmaz. Add/update ve TTL aynı Lua script’inde atomiktir (yalnız Redis tarafında); SQLite ile transaction oluşturmaz. Ürün DB’den silinmişse GET stale Hash alanını temizler. Redis API çağrıları CancellationToken kabul etmediğinden token yalnız EF sorgularını iptal eder.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> <code>HINCRBY</code> ile <code>EXPIRE</code> çağrılarını ayrı yapıp aradaki hata halinde TTL’siz key bırakmak. Buradaki script iki Redis işlemini atomik çalıştırır; SQLite’a karşı yine atomik değildir.</p>
+<h3>6. Program.cs — DI kaydı</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (using bölümü) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;</code></pre><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (mevcut AddDbContext kaydının hemen sonrası) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>builder.Services.AddScoped&lt;ICartService, CartService&gt;();</code></pre><p>Mevcut <code>IConnectionMultiplexer</code> singleton’ı aynen kalır; yeniden kaydetmeyin. Mevcut middleware sırası Authentication → Authorization olarak korunur; CartController’daki <code>[Authorize]</code> için yeni middleware gerekmez. İleride rate limiter etkinleştirilirse authentication sonrasına yerleştirilmesi ayrı konudur.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> <code>using</code> direktifini top-level statements sonrasına eklemek veya <code>CartService</code>’i singleton kaydetmek. Using’i dosyanın üstündeki using grubuna; scoped DbContext alan servisi <code>AddScoped</code> ile ekleyin.</p>
+<h3>7. Controller — bütün endpoint’ler</h3><p><b>Dosya yolu: <code>RestApi/Controllers/CartController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+
+namespace RestApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public sealed class CartController(ICartService cartService) : ControllerBase
+{
+    [HttpGet]
+    public async Task&lt;IActionResult&gt; Get(CancellationToken cancellationToken)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+        try
+        {
+            return Ok(await cartService.GetAsync(userId, cancellationToken));
+        }
+        catch (CartStoreUnavailableException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503,
+                Title = "Cart store is temporarily unavailable."
+            });
+        }
+        catch (CartDataException)
+        {
+            return Problem(statusCode: 500, title: "Cart data is invalid.");
+        }
+    }
+
+    [HttpPost("items")]
+    public async Task&lt;IActionResult&gt; Add(
+        AddCartItemRequestDto request, CancellationToken cancellationToken)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+        try
+        {
+            return Ok(await cartService.AddAsync(
+                userId, request.ProductId, request.Quantity, cancellationToken));
+        }
+        catch (CartProductNotFoundException)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Status = 404,
+                Title = "Product was not found."
+            });
+        }
+        catch (CartQuantityLimitException)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Status = 409,
+                Title = "The maximum cart quantity for this product is 99."
+            });
+        }
+        catch (CartStoreUnavailableException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503,
+                Title = "Cart store is temporarily unavailable."
+            });
+        }
+        catch (CartDataException)
+        {
+            return Problem(statusCode: 500, title: "Cart data is invalid.");
+        }
+    }
+
+    [HttpPut("items/{productId:int}")]
+    public async Task&lt;IActionResult&gt; Update(
+        [Range(1, int.MaxValue)]
+        int productId, UpdateCartItemRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+        try
+        {
+            return Ok(await cartService.UpdateAsync(
+                userId, productId, request.Quantity, cancellationToken));
+        }
+        catch (CartProductNotFoundException)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Status = 404,
+                Title = "Product was not found."
+            });
+        }
+        catch (CartItemNotFoundException)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Status = 404,
+                Title = "Product is not in the cart."
+            });
+        }
+        catch (CartStoreUnavailableException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503,
+                Title = "Cart store is temporarily unavailable."
+            });
+        }
+        catch (CartDataException)
+        {
+            return Problem(statusCode: 500, title: "Cart data is invalid.");
+        }
+    }
+
+    [HttpDelete("items/{productId:int}")]
+    public async Task&lt;IActionResult&gt; Remove([Range(1, int.MaxValue)] int productId)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+        try
+        {
+            await cartService.RemoveAsync(userId, productId);
+            return NoContent();
+        }
+        catch (CartStoreUnavailableException)
+        {
+            return StatusCode(503, new ProblemDetails
+            {
+                Status = 503,
+                Title = "Cart store is temporarily unavailable."
+            });
+        }
+    }
+
+    private bool TryGetUserId(out int userId)
+    {
+        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return int.TryParse(claimValue, out userId) &amp;&amp; userId &gt; 0;
+    }
+}</code></pre><p><b>Action açıklamaları ve HTTP sözleşmesi:</b> <code>Get</code> sepeti SQLite fiyatlarıyla döndürür (200); <code>Add</code> mevcut ürünü sepete ekler (200; ürün yok 404, toplam adet 99’u aşarsa 409); <code>Update</code> sepetteki mevcut ürünün miktarını ayarlar (200; ürün/kalem yok 404); <code>Remove</code> kalemi kaldırır (204, tekrar çağrı da 204). [ApiController] DTO doğrulamasında otomatik 400; kimlik yok/claim geçersiz 401; Redis erişilemiyor 503; invalid Redis data 500. Kullanıcı ID’si body, route veya query’den alınmaz.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Mevcut [Authorize(Roles="Product")] kuralını Cart’a kopyalayıp diğer giriş yapmış kullanıcıları gereksiz engellemek veya kullanıcı ID’sini isteğe bırakmak. Bu öneride yalnız authenticated kullanıcı gerekir ve sepet claim’den ayrıştırılır.</p>
+<h3>8. Çalıştırma ve uçtan uca doğrulama</h3><p><b>Mevcut projeden doğrulandı:</b> Login rotası <code>POST api/auth/login</code>; <code>UserLoginDto</code> Username (e-posta), Password ve zorunlu City bekler. Gerçek kullanıcı/parola HTML’e yazılmaz. Kendi terminalinde güvenli biçimde değişkenlere gir; curl cevabını ekrana basmadan yalnız token ve user ID alanlarını çıkar. Kullanılacak kullanıcı mevcut bir SQLite User olmalı. Ürünü bulmak için bilinen Product ID kullanın; mevcut <code>GET api/product</code> ayrıca Product rolü ister.</p><p><b>Konum: Terminal (repo root) · Mevcut projeden doğrulandı endpoint + Önerilen Cart entegrasyon testi</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+USER_ID="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.user.id')"
+test -n "$TOKEN" &amp;&amp; test "$TOKEN" != "null" &amp;&amp; test -n "$USER_ID"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p>Bu komut token’ı ekrana yazdırmaz; shell değişkenindeki token’ı yalnız aşağıdaki Authorization header’ında kullanın. Geliştirme ortamının mevcut login action’ı parola türevlerini console’a yazdırır ve ErrorHandler header’ları loglar; test sırasında gerçek sırları ortak log/terminal kayıtlarına taşımamaya dikkat edin.</p><p><b>Konum: Terminal (repo root) · Önerilen geliştirme endpoint’leri</b></p><pre><button class="copy">Kopyala</button><code># PRODUCT_ID mevcut SQLite Products tablosundaki gerçek bir Id olmalı.
+PRODUCT_ID=12
+
+# 1) Sepete ekle
+curl -sS -X POST "http://localhost:5120/api/cart/items" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data "{\"productId\":$PRODUCT_ID,\"quantity\":2}"
+
+# 2) Sepeti oku
+curl -sS "http://localhost:5120/api/cart" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 3) Miktarı 3 yap
+curl -sS -X PUT "http://localhost:5120/api/cart/items/$PRODUCT_ID" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"quantity":3}'
+
+# 4) Kalemi kaldır
+curl -i -X DELETE "http://localhost:5120/api/cart/items/$PRODUCT_ID" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 5) Sepet artık boş olmalı
+curl -sS "http://localhost:5120/api/cart" \
+  -H "Authorization: Bearer $TOKEN"</code></pre><p><b>Beklenen yanıt şekli (fiyatlar mevcut SQLite Product.Price değerine göre değişir; sayılar yalnız örnektir):</b> add/get/update için <code>{"items":[{"productId":12,"quantity":2,"unitPrice":12.5,"lineTotal":25.0}],"total":25.0}</code>; update sonrası quantity 3 ve toplam yeniden hesaplanır. Delete <code>204 No Content</code>; son GET <code>{"items":[],"total":0}</code>. Var olmayan product ID POST/PUT için 404; quantity 0 veya 99’dan büyükse 400; Bearer token olmadan 401; Redis kapalı/timeout ise 503.</p><p><b>Konum: Terminal (repo root) · Redis doğrulama · Önerilen geliştirme key</b></p><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli HGETALL "cart:user:${USER_ID}"
+docker exec -it redis-lab redis-cli TTL "cart:user:${USER_ID}"
+unset TOKEN USER_ID PRODUCT_ID</code></pre><p>Hash’te field gerçek ProductId, value quantity olmalı; her başarılı ekleme/güncelleme TTL’i yaklaşık yedi güne yeniler. Remove sonrası son field silinirse key kalmaz (<code>TTL</code> sonucu -2); kalan kalem varsa TTL yenilenir.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Örnek PRODUCT_ID’yi veritabanında var kabul etmek veya token’ı dokümana/komut geçmişine yapıştırmak. Uygun ürünü kendi güvenli test ortamında seçin; örnekteki sayı ve token değişkeni gerçek kullanıcı verisi değildir.</p>
+<h3>9. Son kontrol listesi</h3><ul class="checklist"><li><label><input type="checkbox">Mevcut singleton multiplexer ve scoped CartService kullanılıyor.</label></li><li><label><input type="checkbox">Cart için entity/migration eklenmedi; Product.Price SQLite’tan geliyor.</label></li><li><label><input type="checkbox">Request DTO’larında userId yok; controller NameIdentifier claim’ini kullanıyor.</label></li><li><label><input type="checkbox">Redis erişim hatası boş sepet değil, kontrollü 503 üretiyor.</label></li><li><label><input type="checkbox">Add/Get/Update/Delete ve Redis key uçtan uca doğrulandı.</label></li></ul><p class="warn"><b>Güvenlik notu:</b> User ID’yi yalnız doğrulanmış JWT claim’inden alın. Redis/SQLite arasında dağıtık transaction yoktur; bu geçici sepet sipariş veya stok garantisi sağlamaz.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<section class="card"><h2>Redis Komut Laboratuvarı</h2><p><b>Dosya/konum: Terminal (repo root) · Mevcut proje compose yapılandırması + laboratuvar komutları · Önerilen sepet key’i</b></p><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+HSET cart:user:42 12 2 19 1
+HINCRBY cart:user:42 12 1
+EXPIRE cart:user:42 604800
+HGETALL cart:user:42
+HDEL cart:user:42 19</code></pre><p>Beklenti: HINCRBY sonrası 12 alanı 3 olur. Bunlar eğitim örneğidir; ID’yi gerçek tokendan alın, terminal geçmişine gerçek kullanıcı verisi yazmayın.</p><h3>.NET örneği · önerilen Services/CartService.cs</h3><p><b>Dosya yolu: <code>RestApi/Services/CartService.cs</code> · Önerilen geliştirme — kısa kavram örneği; uçtan uca uygulamada yukarıdaki interface ve tam CartService kodunu kullanın, aynı sınıfı ikinci kez eklemeyin.</b></p><pre><button class="copy">Kopyala</button><code>using StackExchange.Redis;
+
+public sealed class CartService(IConnectionMultiplexer mux)
+{
+    public async Task AddAsync(int userId, int productId, int quantity)
+    {
+        if (quantity &lt;= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
+        var db = mux.GetDatabase();
+        var key = (RedisKey)$"cart:user:{userId}";
+        await db.HashIncrementAsync(key, productId.ToString(), quantity);
+        await db.KeyExpireAsync(key, TimeSpan.FromDays(7));
+    }
+}</code></pre><p>DI: <code>builder.Services.AddScoped&lt;CartService&gt;()</code>. Kod miktar alanı için Redis’i kullanır; fiyatı bu sınıfa gömmez.</p></section>
+<section class="card"><h2>F · İstek akışı ve senaryolar</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → CartController → CartService → Redis Hash → SQLite Product (fiyat/ürün doğrulaması)</div><div class="cols"><div class="box"><b>Başarılı:</b> JWT’den userId → ürün SQLite’ta bulunur → Hash miktarı güncellenir ve TTL yenilenir → yanıt güncel fiyatı döndürür.</div><div class="box"><b>Başarısız:</b> token yoksa 401; geçersiz ProductId 404; Redis timeout ise belirlenmiş hata politikası (geçici sepet için kontrollü 503), sessiz boş sepet cevabı değil.</div></div><h2>G · Production’da dikkat</h2><ul><li>Hash alanları kendi başına kendiliğinden sona ermez; key TTL ve sepet üst sınırı tanımla.</li><li>Aynı ürün güncelleme kaybı riskinde HINCRBY; azaltma/sıfır sınırı gerekiyorsa Lua ile Redis tarafında atomik koşul, SQLite ile transaction değildir.</li><li>Sepet miktarı stok rezervasyonu değildir. Satın alma anında SQLite kaynak doğrulaması, ürün başına unique/constraint ve idempotent sipariş akışı gerekir.</li><li>Redis kesintisinde sepet verisini kaybetme/503 kararı ürün beklentisiyle belgelenmeli.</li></ul><h2>H · Öğrenme çıktıları ve önkoşul</h2><p>Hash, key namespace, TTL, claim tabanlı sahiplik ve geçici/kalıcı veri ayrımını öğrenirsiniz. Önceki modül şartı yok; bu modülden sonra Modül 10 stok rezervasyonu için önerilir.</p><h2>I · Uygulama görevleri</h2><ol><li>Sepete ürün ekle; <details><summary>İpucu</summary>JWT NameIdentifier ile key oluştur; SQLite’dan ürün varlığını doğrula.</details></li><li>Ürün fiyatı değişince toplamın güncellendiğini sağla; <details><summary>İpucu</summary>Hash’e yalnızca ProductId/miktar yaz; her GET’te fiyat kaynağını oku.</details></li><li>İki paralel artım ve Redis timeout test et; <details><summary>İpucu</summary>INCR semantiğini, TTL yenilemeyi ve 503 politikasını doğrula.</details></li></ol><h2>J · Production kontrol listesi / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">Key’de e-posta değil userId kullanılıyor.</label></li><li><label><input type="checkbox">Sepet TTL’i ve maksimum alan sayısı tanımlı.</label></li><li><label><input type="checkbox">Fiyat SQLite’tan alınıyor; sepet stok ayırmıyor.</label></li><li><label><input type="checkbox">Redis arızasında davranış belgeli ve testli.</label></li></ul><details><summary>Kendini değerlendir · yanıtları göster</summary><p>1) Hash neden uygun? Ürün alanlarını tek user key’inde tutar, alan güncellemesini sağlar. 2) TTL neyi garanti etmez? Tam zamanında fiziksel silmeyi. 3) Client userId neden kabul edilmez? Başka kullanıcının sepetine erişim riski. 4) Sepet fiyatı/stok garantisi verir mi? Hayır; kaynak SQLite/işlem doğrulaması gerekir.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Fiyatı Redis sepetinde otoritatif tutmak → SQLite Product.Price ile hesapla.</li><li>Sepet key’ine e-posta koymak → claim’den userId kullan.</li><li>Sepeti stok rezervasyonu sanmak → ayrı rezervasyon/DB akışı kur.</li></ul></section>
+<nav class="pager"><a href="index.html">← Ana sayfa</a><a href="02-distributed-rate-limiting.html">Sonraki: Distributed Rate Limiting →</a></nav><footer class="footer">Laboratuvar öneridir; RestApi koduna uygulanmadı.</footer>
+</main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s);b.textContent="Kopyalandı"}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove();b.textContent="Kopyalandı"}setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

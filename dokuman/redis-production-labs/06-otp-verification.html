@@ -1,0 +1,183 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>06 · OTP Verification</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 06 / 12</span><span class="badge">İleri</span><span class="badge">60 dakika</span></p><h1>OTP Verification</h1><p>Bir kullanımlık kod, yanlış deneme sınırı ve Redis kesintisinde bilinçli güvenlik davranışı.</p><span class="proposal">Önerilen geliştirme · OTP/email/SMS servisi mevcut değil</span></header>
+<section class="card"><h2>A · Problem / B · Redis niçin?</h2><p>Parola sıfırlama veya e-posta doğrulama kodu her API instance’ında bellekte tutulursa diğer instance doğrulayamaz; process restart kaydı siler. Redis String + TTL kodun kısa ömürlü paylaşımını ve sayaçları sağlar. TTL kodun belirli milisaniyede fiziksel silineceğini garanti etmez; server-side expiry kontrolü de gerekir. Redis kalıcı kimlik kanıtı, e-posta gönderim garantisi veya SQL transaction değildir. SQLite kullanıcı kaydı authoritative; bu uygulamada e-posta formatı UserLoginDto.Username’de var fakat OTP/email provider yok. SQLite çok instance yazma açısından sınırlı.</p><h2>C · Özellikler ve key’ler</h2><div class="cols"><div class="box"><b>String + TTL:</b> OTP hash’ini sınırlı süre tut.</div><div class="box"><b>Attempts counter:</b> INCR + expire; atomik sayaç, account/IP limit ile birlikte.</div><div class="box"><b>Lua:</b> compare, attempt count, success delete tek Redis script; SQLite transaction veya external email delivery ile atomic değil.</div></div><table><tr><th>Key</th><th>Tip</th><th>TTL / erişim</th></tr><tr><td><code>otp:user:{userId}:verify</code></td><td>String OTP hash + purpose/version metadata gerekirse hash</td><td>Kısa geçerlilik, ör. 5 dk (policy sample); userId claim/database lookup. Username/OTP raw key’de yok.</td></tr><tr><td><code>otp:user:{userId}:attempts</code></td><td>String integer</td><td>Deneme penceresi; OTP key ile aynı TTL olmak zorunda değil. Resend ayrıca rate-limit key.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Tümü <b>Önerilen geliştirme</b>. Username e-posta biçimli; e-posta servisi dış entegrasyon olarak eklenmeli. Identities/roles mevcut: NameIdentifier, Name, Product/Note. OTP code gövdesinden asla log üretme.</p><div class="scroll"><table><tr><th>Metot/rota</th><th>İstek / yanıt / hata</th><th>Redis / SQLite</th></tr><tr><td>POST <code>api/auth/otp/request</code></td><td><code>{"username":"person@example.test"}</code> → 202 generic response; 400/429. Generic response avoids account enumeration.</td><td>Redis code hash TTL + resend limit; SQLite user lookup, mail delivery.</td></tr><tr><td>POST <code>api/auth/otp/verify</code></td><td><code>{"username":"...","code":"000000"}</code> → 204; invalid/expired 400/401; blocked 429.</td><td>Atomic compare+attempt increment+consume; SQLite account state update.</td></tr><tr><td>POST <code>api/auth/password-reset</code></td><td>Verified reset proof + new password → 204; invalid proof 401; validation 400.</td><td>One-use proof; SQLite BCrypt password hash update. Never return stored password.</td></tr></table></div></section>
+<section class="card"><h2>E · Uygulama adımları</h2><ol><li>Generate numeric code with <code>RandomNumberGenerator</code>, not <code>Random</code>; fixed width and leading zero preservation. Send only through provider.</li><li>Store keyed hash/HMAC or hash with server-side secret to reduce impact if Redis read leaked; ordinary fast hash of 6 digits is enumerable, so rate limits remain essential. Choose constant-time comparison / secret lifecycle.</li><li>Script validates the attempt and consumes code atomically. Separate resend/verification windows; per-account and per-IP safeguards.</li><li>Audit log has correlation ID/status only; existing AuthController logs password hash, encrypted and decrypted password values; ErrorHandler logs all headers. These are explicit counterexamples to follow.</li></ol><section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> OTP endpoint/provider mevcut değil. Challenge geçici Redis verisidir; entity/migration gerekmez. Aşağıdaki local-only delivery demo gerçek provider değildir.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, StackExchange.Redis 3.3.1 ve singleton <code>IConnectionMultiplexer</code> mevcut; ek paket yok. Redis: <code>docker compose up -d redis</code>. HMAC secret’i <code>Otp__HmacKey</code> environment variable/secret store’dan sağlayın; source’a yazmayın.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Console delivery’yi production’da bırakmak. OTP’yi terminale yazmak yalnız local eğitim içindir.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Mevcut projeden doğrulandı:</b> Kalıcı OTP entity’si eklemiyoruz; Redis TTL ile 5 dakika sonra challenge kullanılmaz. Audit/delivery retry gerekirse ayrı outbox ve retention tasarlayın.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Geçici doğrulama kodlarını User tablosunda kalıcı tutmak.</p>
+<h3>3. DTO’lar</h3><p>Send has no body because the authenticated account identifies the recipient. Verification uses a validated DTO.</p><p><b>Dosya yolu: <code>RestApi/CustomValids/SixDigitCodeAttribute.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+using System.Text.RegularExpressions;
+namespace RestApi.CustomValids;
+public sealed class SixDigitCodeAttribute : ValidationAttribute
+{
+    public override bool IsValid(object? value) =&gt;
+        value is string code &amp;&amp; Regex.IsMatch(code, "^[0-9]{6}$");
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/OtpVerifyDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+using RestApi.CustomValids;
+namespace RestApi.Models.Dto;
+public sealed class OtpVerifyDto
+{
+    [Required, SixDigitCode]
+    public string Code { get; init; } = string.Empty;
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> StringLength attribute’ında olmayan bir Pattern parametresi kullanmak; custom validator formatı kontrol eder.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/OtpRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+namespace RestApi.Services;
+public static class OtpRedisKeys
+{
+    public static string Challenge(int userId) =&gt;
+        userId &gt; 0 ? $"otp:user:{userId}:verify"
+                    : throw new ArgumentOutOfRangeException(nameof(userId));
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> PII’yi key’e koymak; internal numeric userId kullanın.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/IOtpDelivery.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+namespace RestApi.Services;
+public interface IOtpDelivery
+{
+    Task SendAsync(string email, string code, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/DevelopmentConsoleOtpDelivery.cs</code> · Önerilen geliştirme · Development only</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Threading;
+using System.Threading.Tasks;
+namespace RestApi.Services;
+public sealed class DevelopmentConsoleOtpDelivery : IOtpDelivery
+{
+    public Task SendAsync(string email, string code, CancellationToken ct)
+    {
+        Console.WriteLine($"[LOCAL OTP DELIVERY] recipient={email}; code={code}");
+        return Task.CompletedTask;
+    }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/IOtpService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+namespace RestApi.Services;
+public interface IOtpService
+{
+    Task IssueAsync(int userId, string email, CancellationToken ct);
+    Task&lt;bool&gt; VerifyAsync(int userId, string code, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/OtpService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class OtpService(
+    IConnectionMultiplexer multiplexer, IOtpDelivery delivery,
+    IConfiguration configuration) : IOtpService
+{
+    private readonly IDatabase _db = multiplexer.GetDatabase();
+    private readonly byte[] _key = GetHmacKey(configuration);
+
+    private static byte[] GetHmacKey(IConfiguration configuration)
+    {
+        var value = configuration["Otp:HmacKey"]
+            ?? throw new InvalidOperationException("Otp:HmacKey is required.");
+        var key = Encoding.UTF8.GetBytes(value);
+        if (key.Length &lt; 32)
+            throw new InvalidOperationException("Otp:HmacKey must be at least 32 bytes.");
+        return key;
+    }
+
+    public async Task IssueAsync(int userId, string email, CancellationToken ct)
+    {
+        var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        var digest = Convert.ToHexString(HMACSHA256.HashData(_key,
+            Encoding.UTF8.GetBytes($"{userId}:{code}")));
+        if (!await _db.StringSetAsync(OtpRedisKeys.Challenge(userId), digest,
+                TimeSpan.FromMinutes(5), When.NotExists))
+            throw new InvalidOperationException("Challenge already active.");
+        await delivery.SendAsync(email, code, ct);
+    }
+
+    public async Task&lt;bool&gt; VerifyAsync(int userId, string code, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var key = (RedisKey)OtpRedisKeys.Challenge(userId);
+        var stored = await _db.StringGetAsync(key);
+        if (stored.IsNull) return false;
+        var digest = Convert.ToHexString(HMACSHA256.HashData(_key,
+            Encoding.UTF8.GetBytes($"{userId}:{code}")));
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(stored.ToString()), Encoding.ASCII.GetBytes(digest)))
+            return false;
+        return await _db.KeyDeleteAsync(key);
+    }
+}</code></pre><p>Redis exceptions propagate; verification fails closed. Provide a 32+ byte key via <code>Otp__HmacKey</code>. Six-digit codes need atomic attempt limits and per-account/IP throttling before production; compare and delete here is not atomic under concurrent verification. Delivery failure leaves the challenge until its 5-minute expiry.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Fail-open verification or unlimited guesses. Use an atomic Lua compare/attempt/consume implementation before production.</p>
+<h3>6. Program.cs — DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Mevcut service registrations yakını · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+if (!builder.Environment.IsDevelopment())
+    throw new InvalidOperationException("Replace OTP console delivery before deployment.");
+builder.Services.AddScoped&lt;IOtpDelivery, DevelopmentConsoleOtpDelivery&gt;();
+builder.Services.AddScoped&lt;IOtpService, OtpService&gt;();</code></pre><p>Production’da real provider registration ile guard’ı değiştirin; Authentication → Authorization sırasını değiştirmeyin.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Bu örneği provider olmadan production deploy etmek.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/OtpController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/otp")]
+[Authorize]
+public sealed class OtpController(ApplicationDbContext context, IOtpService service)
+    : ControllerBase
+{
+    private bool TryUserId(out int id) =&gt;
+        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out id) &amp;&amp; id &gt; 0;
+
+    [HttpPost("send")]
+    public async Task&lt;IActionResult&gt; Send(CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        var user = await context.Users.AsNoTracking()
+            .SingleOrDefaultAsync(x =&gt; x.Id == userId, ct);
+        if (user is null) return Unauthorized();
+        try { await service.IssueAsync(userId, user.Username, ct); return Accepted(); }
+        catch (InvalidOperationException) { return Conflict(); }
+        catch (RedisException) { return StatusCode(503); }
+    }
+
+    [HttpPost("verify")]
+    public async Task&lt;IActionResult&gt; Verify(OtpVerifyDto request, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        try
+        {
+            return await service.VerifyAsync(userId, request.Code, ct)
+                ? NoContent() : BadRequest(new ProblemDetails { Title = "Invalid or expired code." });
+        }
+        catch (RedisException) { return StatusCode(503); }
+    }
+}</code></pre><p>Send: 202, active challenge 409; verify: 204/400; unauthenticated 401, Redis outage 503. This demo is not a password-reset or login bypass flow; production should return generic send responses to prevent enumeration.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> DTO e-postasıyla farklı hesaba challenge göndermek; account is derived from NameIdentifier and email is read from SQLite.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · önce mevcut login ile token al</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen endpoint doğrulaması</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/otp/send \
+  -H "Authorization: Bearer $TOKEN"
+# Read local-only demo code in API console; never use this delivery in production.
+read -r -p "Development console code: " OTP_CODE
+curl -i -X POST http://localhost:5120/api/otp/verify \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data "{\"code\":\"$OTP_CODE\"}"
+docker exec -it redis-lab redis-cli SCAN 0 MATCH 'otp:user:*:verify' COUNT 100
+unset TOKEN LOGIN_USER OTP_CODE</code></pre><p>Expected send 202, key TTL at most 300 seconds, correct code 204 and key deleted, wrong/expired code 400. Do not include OTP in screenshots/transcripts.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis key yokken verification’ı başarılı kabul etmek. Missing challenge always fails closed.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">No persistent OTP entity or migration was added.</label></li><li><label><input type="checkbox">HMAC secret comes from environment/secret store.</label></li><li><label><input type="checkbox">Console delivery is Development-only.</label></li><li><label><input type="checkbox">TTL and brute-force controls reviewed.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<h3>Redis Komut Laboratuvarı</h3><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SET otp:user:42:verify sha256-demo EX 300
+INCR otp:user:42:attempts
+EXPIRE otp:user:42:attempts 900
+TTL otp:user:42:verify
+DEL otp:user:42:verify otp:user:42:attempts</code></pre><p>“sha256-demo” is placeholder, never a usable OTP. Real verify should compare and consume atomically; separate GET/DEL allows concurrent double redemption.</p><h3>.NET örneği · önerilen OTP service</h3><pre><button class="copy">Kopyala</button><code>using System.Security.Cryptography;
+var bytes = RandomNumberGenerator.GetBytes(4);
+var value = BitConverter.ToUInt32(bytes) % 1_000_000;
+var code = value.ToString("D6");
+// Persist only a keyed verifier with short TTL; deliver code via provider.
+await mux.GetDatabase().StringSetAsync(
+    $"otp:user:{userId}:verify", verifier, TimeSpan.FromMinutes(5));</code></pre><p>Modulo introduces slight bias; production code should use unbiased bounded random generation. Snippet highlights cryptographic source only; verifier, delivery and atomic consume remain to implement. Use multiplexer singleton and Services DI.</p></section>
+<section class="card"><h2>F · Akış, risk ve öğrenme</h2><div class="flow">HTTP → ErrorHandlerMiddleware (header redaction required) → GlobalMiddleware → Authentication/Authorization as designed → OTP Controller → Redis attempt/verify → SQLite account/password update → email provider</div><div class="cols"><div class="box"><b>Success:</b> valid, unexpired, under threshold → atomic consume → DB update → 204.</div><div class="box"><b>Failure:</b> expired/wrong → increment counter atomically; Redis outage → explicit fail-closed 503, never silently accept.</div></div><ul><li>Redis Lua only makes Redis keys atomic; sending mail, SQLite update and Redis consumption are not one transaction.</li><li>Wrong attempt exhaustion and resend flooding; account lockout denial-of-service tradeoff.</li><li>Do not put code, email, token or secrets in logs; current login logging violates intended hygiene.</li><li>Redis eviction/restart can invalidate outstanding OTP; communicate resend path. SQLite stores account state.</li></ul><p>Outcomes: cryptographic random, TTL, rate limit, consume-once and failure policy. Prerequisite Mod 02 rate limiting; next Mod 09 idempotency handles retries.</p><h2>Görevler</h2><ol><li>Generate secure six-digit OTP. <details><summary>İpucu</summary>Use cryptographic RNG and preserve zeros.</details></li><li>Set resend and attempt limits. <details><summary>İpucu</summary>Separate per-user and per-IP keys with distinct TTL.</details></li><li>Race two valid verification requests and test Redis outage. <details><summary>İpucu</summary>Lua consume-once; no silent success on timeout.</details></li></ol><h2>Checklist / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">RandomNumberGenerator kullanılıyor.</label></li><li><label><input type="checkbox">Hash verifier, TTL, try count/ resend limit tanımlı.</label></li><li><label><input type="checkbox">Verify+consume atomik; mail/SQLite transaction sanılmıyor.</label></li><li><label><input type="checkbox">OTP, password, header ve token log redaction var.</label></li></ul><details><summary>Yanıtları göster</summary><p>1) Random neden olmaz? Güvenlik için tahmin edilebilir PRNG yetersiz. 2) Neden düz OTP saklamamak? Redis read sızıntısında anında kullanım riskini azaltır; 6 haneli uzay hash ile de brute-force edilebilir. 3) GET ardından DEL problemi? Paralel istekte çift kabul. 4) Redis down? OTP kontrolünü bypass etme.</p></details><h3>Sık yapılan hatalar</h3><ul><li>OTP’yi Console’a yazmak → hassas logları yasakla.</li><li>Tek DB/Redis arası atomiklik varsaymak → recovery/idempotent state transition kur.</li><li>Unlimited verification → per-user/IP attempts + resend guard.</li></ul></section>
+<nav class="pager"><a href="05-favorites-and-set-operations.html">← Önceki: Favorites</a><a href="07-feature-flags.html">Sonraki: Feature Flags →</a></nav><footer class="footer">OTP endpoint’leri ve provider mevcut projede yoktur.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

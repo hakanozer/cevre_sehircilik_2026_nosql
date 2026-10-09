@@ -1,0 +1,302 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>04 · Notification Center</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap">
+<header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 04 / 12</span><span class="badge">Orta</span><span class="badge">60 dakika</span></p><h1>Notification Center</h1><p>Hızlı kullanıcıya özel bildirim görünümüyle kalıcı bildirim geçmişini birbirine karıştırmayın.</p><span class="proposal">Önerilen geliştirme · Bildirim modeli/controller mevcut değil</span></header>
+<section class="card"><h2>A · Problem ve B · Redis’in rolü</h2><p>Ürün olayı sonrası binlerce kullanıcının bildirimini HTTP isteği içinde üretmek gecikmeyi artırır. Tek instance in-memory listesi restart/instance değişiminde kaybolur. SQLite yeni bildirim tablosu kalıcı geçmişin doğruluk kaynağı olur; Redis Sorted Set son bildirim sırası ve unread counter’ı hızlandırır. Stream producer-consumer ayrımına yardımcıdır, ancak retention/ack yönetimi gerekir. Redis ephemeral state ve hızlı index; tek başına durable inbox, exactly-once delivery ya da çevrimdışı mesaj garantisi değildir. SQLite multi-instance concurrent writes için sınırlıdır.</p><h2>C · Redis veri yapıları</h2><div class="cols"><div class="box"><b>Sorted Set:</b> notification ID member, created timestamp score; ZREVRANGE ile son kayıtlar.</div><div class="box"><b>Hash:</b> küçük notification payload cache’i; kalıcı kopya SQLite’ta. Hash key TTL/eviction belirlenir.</div><div class="box"><b>Stream:</b> producer/consumer işleri ve consumer group ack; online push için SignalR ayrıca paket ve bağlantı altyapısı ister.</div></div><table><tr><th>Key</th><th>Tip / amaç</th><th>TTL / kapsam / tutarlılık</th></tr><tr><td><code>notification:user:{userId}:recent</code></td><td>Sorted Set; son ID’ler, score=UTC timestamp</td><td>Son N ile trim veya cache policy; userId claim; SQLite history authoritative.</td></tr><tr><td><code>notification:item:{notificationId}</code></td><td>Hash payload cache</td><td>Kısa cache TTL; notificationId global; kayıp halinde SQLite’dan yükle.</td></tr><tr><td><code>notification:stream:events</code></td><td>Stream event queue</td><td>Retention/maxlen policy, consumer group pending/ack yönetimi; kalıcı DB’nin yerine geçmez.</td></tr></table></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Tamamı <b>Önerilen geliştirme</b>; yeni tablo EF migration ile eklenmeli. İstemci userId almamalı. NoteController.GetAll tüm notları döndürür ve Create body’den UserId alır; bildirim endpoint’inde aynı sahiplik hatası yapılmamalı.</p><div class="scroll"><table><tr><th>Metot / URL</th><th>İstek / yanıt / hata</th><th>Redis / SQLite</th></tr><tr><td>GET <code>api/notifications?before=...</code></td><td>Bearer → 200 <code>{"items":[...],"nextCursor":"..."}</code>; 401/503.</td><td>ZRANGE/ ZREVRANGE IDs, SQLite pagination/history for authoritative details.</td></tr><tr><td>POST <code>api/notifications/{id}/read</code></td><td>Body yok → 204; başka user notification 404; 401.</td><td>SQLite read state update; Redis unread count update/invalidate.</td></tr><tr><td>GET <code>api/notifications/unread-count</code></td><td>→ 200 <code>{"count":3}</code>; cache miss DB, Redis unavailable 503 or documented DB fallback.</td><td>GET cached count; SQLite unread rows authoritative.</td></tr></table></div><p>Yetkilendirme: authenticated caller, owner id from NameIdentifier; Product/Note roles mevcut, Notification/Admin rolü yok.</p></section>
+<section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Bildirim modeli, service ve endpoint’ler mevcut projede bulunmuyor. Aşağıdaki sırayla uygularsanız kalıcı geçmiş SQLite’ta, hızlı recent index Redis’te olur.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, EF Core SQLite 9.0.2, StackExchange.Redis 3.3.1 ve singleton <code>IConnectionMultiplexer</code> mevcut. Yeni paket gerekmez. Redis’i başlatmak için repository root’ta <code>docker compose up -d redis</code>.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> SignalR endpoint’i varmış gibi kullanmak; proje SignalR paketi/Hub içermiyor. Bu rehber HTTP polling endpoint’leriyle sınırlı.</p>
+<h3>2. Model ve veritabanı</h3><p><b>Dosya yolu: <code>RestApi/Models/Notification.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace RestApi.Models;
+
+public sealed class Notification
+{
+    [Key]
+    public int Id { get; set; }
+
+    [Required, StringLength(80)]
+    public string Type { get; set; } = string.Empty;
+
+    [Required, StringLength(160)]
+    public string Title { get; set; } = string.Empty;
+
+    [Required, StringLength(2000)]
+    public string Message { get; set; } = string.Empty;
+
+    [Required]
+    public int UserId { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ReadAtUtc { get; set; }
+
+    [ForeignKey(nameof(UserId))]
+    public User User { get; set; } = null!;
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Data/ApplicationDbContext.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>public DbSet&lt;Notification&gt; Notifications { get; set; }</code></pre><p>Bu property’yi mevcut DbSet declarations yanına ekleyin. Sonra proje kökünden:</p><p><b>Dosya/konum: Terminal (repository root)</b></p><pre><button class="copy">Kopyala</button><code>dotnet ef migrations add AddNotifications --project RestApi
+dotnet ef database update --project RestApi</code></pre><p>Migration sonrası SQLite’ta <code>Notifications</code> tablosu, Users FK ve UserId index’i beklenir; generated migration’ı inceleyin. Rollback: <code>dotnet ef database update &lt;önceki-migration-adı&gt; --project RestApi</code> (önce veriyi yedekleyin).</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Entity ve DbSet ekleyip database update’i atlamak veya cascade davranışını gözden kaçırmak. Migration’da foreign key, index, required alan ve deletion policy’yi doğrulayın.</p>
+<h3>3. DTO’lar</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/CreateNotificationRequestDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+
+namespace RestApi.Models.Dto;
+
+public sealed class CreateNotificationRequestDto
+{
+    [Required, StringLength(80)]
+    public string Type { get; init; } = string.Empty;
+    [Required, StringLength(160)]
+    public string Title { get; init; } = string.Empty;
+    [Required, StringLength(2000)]
+    public string Message { get; init; } = string.Empty;
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/NotificationResponseDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Models.Dto;
+
+public sealed record NotificationResponseDto(
+    int Id, string Type, string Title, string Message,
+    DateTime CreatedAtUtc, DateTime? ReadAtUtc);</code></pre><p>UserId deliberately isn’t in request DTO; owner is claim-derived.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Client’tan owner id veya arbitrary read status kabul etmek. İstemci yalnız notification content alanlarını verir; ownership and read transition are server-controlled.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/NotificationRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public static class NotificationRedisKeys
+{
+    public static string Recent(int userId) =&gt;
+        userId &gt; 0 ? $"notification:user:{userId}:recent"
+                    : throw new ArgumentOutOfRangeException(nameof(userId));
+    public static string Item(int id) =&gt;
+        id &gt; 0 ? $"notification:item:{id}"
+               : throw new ArgumentOutOfRangeException(nameof(id));
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> E-posta/Username’i key’e koymak. Her key userId veya notificationId ile ayrıştırılmalıdır.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/INotificationService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+
+namespace RestApi.Services;
+
+public interface INotificationService
+{
+    Task&lt;NotificationResponseDto&gt; CreateAsync(
+        int userId, CreateNotificationRequestDto request, CancellationToken ct);
+    Task&lt;IReadOnlyList&lt;NotificationResponseDto&gt;&gt; GetRecentAsync(
+        int userId, int count, CancellationToken ct);
+    Task&lt;bool&gt; MarkReadAsync(int userId, int notificationId, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/NotificationStoreUnavailableException.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+
+namespace RestApi.Services;
+
+public sealed class NotificationStoreUnavailableException(Exception inner)
+    : Exception("Notification Redis index is unavailable.", inner) { }</code></pre><p><b>Dosya yolu: <code>RestApi/Services/NotificationService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+
+namespace RestApi.Services;
+
+public sealed class NotificationService(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer)
+    : INotificationService
+{
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+
+    public async Task&lt;NotificationResponseDto&gt; CreateAsync(
+        int userId, CreateNotificationRequestDto request, CancellationToken ct)
+    {
+        var item = new Notification
+        {
+            UserId = userId, Type = request.Type,
+            Title = request.Title, Message = request.Message,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        context.Notifications.Add(item);
+        await context.SaveChangesAsync(ct);
+
+        try
+        {
+            var recent = (RedisKey)NotificationRedisKeys.Recent(userId);
+            await _redis.SortedSetAddAsync(recent, item.Id.ToString(),
+                new DateTimeOffset(item.CreatedAtUtc).ToUnixTimeMilliseconds());
+            await _redis.SortedSetRemoveRangeByRankAsync(recent, 0, -101);
+            await _redis.KeyExpireAsync(recent, TimeSpan.FromDays(7));
+            var itemKey = (RedisKey)NotificationRedisKeys.Item(item.Id);
+            await _redis.HashSetAsync(itemKey, new[]
+            {
+                new HashEntry("title", item.Title),
+                new HashEntry("message", item.Message),
+                new HashEntry("read", "false")
+            });
+            await _redis.KeyExpireAsync(itemKey, TimeSpan.FromDays(1));
+        }
+        catch (RedisException ex)
+        {
+            // SQL commit already succeeded; caller must not assume it rolled back.
+            throw new NotificationStoreUnavailableException(ex);
+        }
+
+        return Map(item);
+    }
+
+    public async Task&lt;IReadOnlyList&lt;NotificationResponseDto&gt;&gt; GetRecentAsync(
+        int userId, int count, CancellationToken ct)
+    {
+        count = Math.Clamp(count, 1, 100);
+        RedisValue[] ids;
+        try
+        {
+            ids = await _redis.SortedSetRangeByRankAsync(
+                NotificationRedisKeys.Recent(userId), 0, count - 1,
+                Order.Descending);
+        }
+        catch (RedisException ex)
+        {
+            throw new NotificationStoreUnavailableException(ex);
+        }
+
+        if (ids.Length == 0)
+        {
+            var latest = await context.Notifications.AsNoTracking()
+                .Where(n =&gt; n.UserId == userId)
+                .OrderByDescending(n =&gt; n.CreatedAtUtc)
+                .Take(count).ToListAsync(ct);
+            try
+            {
+                var key = (RedisKey)NotificationRedisKeys.Recent(userId);
+                foreach (var item in latest)
+                    await _redis.SortedSetAddAsync(key, item.Id.ToString(),
+                        new DateTimeOffset(item.CreatedAtUtc).ToUnixTimeMilliseconds());
+                await _redis.KeyExpireAsync(key, TimeSpan.FromDays(7));
+                ids = latest.Select(n =&gt; (RedisValue)n.Id.ToString()).ToArray();
+            }
+            catch (RedisException ex)
+            {
+                throw new NotificationStoreUnavailableException(ex);
+            }
+        }
+
+        var parsedIds = ids.Select(x =&gt; int.TryParse(x.ToString(), out var id) ? id : 0)
+            .Where(id =&gt; id &gt; 0).ToArray();
+        var rows = await context.Notifications.AsNoTracking()
+            .Where(n =&gt; n.UserId == userId &amp;&amp; parsedIds.Contains(n.Id))
+            .ToDictionaryAsync(n =&gt; n.Id, ct);
+        return parsedIds.Where(rows.ContainsKey).Select(id =&gt; Map(rows[id])).ToArray();
+    }
+
+    public async Task&lt;bool&gt; MarkReadAsync(
+        int userId, int notificationId, CancellationToken ct)
+    {
+        var item = await context.Notifications
+            .SingleOrDefaultAsync(n =&gt; n.Id == notificationId &amp;&amp; n.UserId == userId, ct);
+        if (item is null) return false;
+        if (item.ReadAtUtc is null)
+        {
+            item.ReadAtUtc = DateTime.UtcNow;
+            await context.SaveChangesAsync(ct);
+            try
+            {
+                await _redis.HashSetAsync(NotificationRedisKeys.Item(item.Id),
+                    "read", "true");
+                await _redis.KeyExpireAsync(
+                    NotificationRedisKeys.Item(item.Id), TimeSpan.FromDays(1));
+            }
+            catch (RedisException ex)
+            {
+                throw new NotificationStoreUnavailableException(ex);
+            }
+        }
+        return true;
+    }
+
+    private static NotificationResponseDto Map(Notification n) =&gt;
+        new(n.Id, n.Type, n.Title, n.Message, n.CreatedAtUtc, n.ReadAtUtc);
+}</code></pre><p>SQLite is authoritative for history/read state; Redis Sorted Set is rebuildable index, Hash is short cache. DB commit and Redis writes are not atomic: Redis failure is explicit 503 even though create/read may already be persisted; retry can duplicate create unless idempotency is added. Production repair should rebuild index/outbox, not assume rollback.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis hata verdi diye SQL commit olmadı sanıp blind retry yapmak. Kalıcı row already exists; use idempotency/outbox and reconciliation for reliable delivery.</p>
+<h3>6. Program.cs — DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> (using grubu ve AddDbContext kaydından sonra) · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;INotificationService, NotificationService&gt;();</code></pre><p>Existing middleware Authentication → Authorization remains in place; no new middleware required.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> DbContext kullanan servisi singleton kaydetmek. Scoped service, existing singleton multiplexer’ı alabilir.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/NotificationsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
+
+namespace RestApi.Controllers;
+
+[ApiController]
+[Route("api/notifications")]
+[Authorize]
+public sealed class NotificationsController(INotificationService service)
+    : ControllerBase
+{
+    private bool TryUserId(out int id) =&gt;
+        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out id) &amp;&amp; id &gt; 0;
+
+    [HttpPost]
+    public async Task&lt;IActionResult&gt; Create(
+        CreateNotificationRequestDto request, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        try { return StatusCode(201, await service.CreateAsync(userId, request, ct)); }
+        catch (NotificationStoreUnavailableException)
+        { return StatusCode(503, new ProblemDetails { Status=503, Title="Notification index unavailable; database write may have completed." }); }
+    }
+
+    [HttpGet]
+    public async Task&lt;IActionResult&gt; Recent(
+        [FromQuery] int count = 20, CancellationToken ct = default)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        if (count is &lt; 1 or &gt; 100) return BadRequest();
+        try { return Ok(await service.GetRecentAsync(userId, count, ct)); }
+        catch (NotificationStoreUnavailableException)
+        { return StatusCode(503, new ProblemDetails { Status=503, Title="Notification index unavailable." }); }
+    }
+
+    [HttpPost("{id:int}/read")]
+    public async Task&lt;IActionResult&gt; Read(int id, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        try { return await service.MarkReadAsync(userId, id, ct) ? NoContent() : NotFound(); }
+        catch (NotificationStoreUnavailableException)
+        { return StatusCode(503, new ProblemDetails { Status=503, Title="Notification index unavailable; read state may be saved." }); }
+    }
+}</code></pre><p>POST create 201, GET 200, mark read 204, DTO invalid 400, unauthenticated 401, other user’s ID 404, Redis unavailable 503. Existing roles are Product/Note; this sample requires any authenticated user, not nonexistent Notification/Admin roles.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Query/body userId ile başka kullanıcı bildirimini listelemek veya değiştirmek. NoteController’daki gerçek eksik sahiplik kontrolünü tekrar etmeyin.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · login mevcut, notification routes öneridir</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · Önerilen API doğrulaması</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X POST http://localhost:5120/api/notifications \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"type":"product","title":"Price changed","message":"A product price changed."}'
+curl -sS 'http://localhost:5120/api/notifications?count=10' \
+  -H "Authorization: Bearer $TOKEN"
+curl -i -X POST http://localhost:5120/api/notifications/1/read \
+  -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli SCAN 0 MATCH 'notification:user:*:recent' COUNT 100
+unset TOKEN LOGIN_USER</code></pre><p>Beklenen: POST 201 response has id and timestamps; GET returns only caller’s notifications; read 204 for own row / 404 for absent or other user. Redis recent key should contain notification IDs and `notification:item:{id}` Hash should have title/message/read fields. Redis command inspection: <code>docker exec -it redis-lab redis-cli ZREVRANGE notification:user:YOUR_USER_ID:recent 0 9 WITHSCORES</code>. Use your actual user ID locally; don’t paste tokens or sensitive message contents into logs.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Örnek ID’yi var saymak veya farklı kullanıcıyla mark-read deneyinde 403 beklemek. Bu controller deliberately returns 404 to avoid confirming another user’s notification exists.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">Notification entity + migration/foreign key applied.</label></li><li><label><input type="checkbox">Owner ID always comes from NameIdentifier.</label></li><li><label><input type="checkbox">SQLite history authoritative, Redis index rebuildable.</label></li><li><label><input type="checkbox">Redis failure doesn’t claim DB rollback.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<section class="card"><h2>E · Uygulama adımları</h2><ol><li>Notification entity + migration: owner, type, payload/reference, createdAt, readAt; minimal kişisel payload. Verify ownership FK/index and rollback migration.</li><li>NotificationService ve controller: SQLite kalıcı yazım, sonra Redis index/counter update. DB commit ile Redis update atomik değil; outbox veya repair/rebuild seçeneğini değerlendir.</li><li>Producer event’i Stream’e yaz, BackgroundService consumer group ile işle, ack sonrası completed; pending reclaim ve idempotent event ID ekle.</li><li>SignalR seçilirse ek paket/Hub ve bağlantı authorization’ı gerekir; Pub/Sub kalıcı kuyruk değildir.</li></ol><h3>Redis Komut Laboratuvarı</h3><pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+ZADD notification:user:42:recent 1780000000 n-101
+ZADD notification:user:42:recent 1780000100 n-102
+ZREVRANGE notification:user:42:recent 0 9 WITHSCORES
+HSET notification:item:n-102 title "Price alert" read false
+XADD notification:stream:events * type product-updated productId 12</code></pre><p>Key values illustrative only. Pub/Sub ile yayın yapsanız offline subscriber mesajı kaybeder; Stream ack pending’e kadar kalır ama uçtan uca exactly-once değildir.</p><h3>.NET örneği · önerilen NotificationsService.cs</h3><pre><button class="copy">Kopyala</button><code>public sealed class NotificationsService(
+    IConnectionMultiplexer mux, ApplicationDbContext db)
+{
+    public async Task&lt;int&gt; AddRecentIdAsync(int userId, int notificationId, long score)
+    {
+        var key = (RedisKey)$"notification:user:{userId}:recent";
+        var added = await mux.GetDatabase().SortedSetAddAsync(
+            key, notificationId.ToString(), score);
+        return added ? 1 : 0;
+    }
+}</code></pre><p>Entity persistence, transaction, ownership and retry are intentionally omitted from this focused Redis fragment. Register service with AddScoped; DbContext is scoped.</p></section>
+<section class="card"><h2>F · İstek akışı / hata akışları</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization → NotificationsController → Service → SQLite commit → Redis index/cache (or Stream producer)</div><div class="cols"><div class="box"><b>Başarılı:</b> notification row committed → per-user sorted set indexed → response ID.</div><div class="box"><b>Hata:</b> DB commit succeeded, Redis write failed → notification remains in SQLite; return policy plus retry/rebuild path. Do not report it never existed.</div></div><h2>Production notları / çıktılar</h2><p>Sorted Set order, Hash field cache, Streams consumer group, owner claim and durable-vs-ephemeral split. Keep old notifications in SQLite; trim Redis index deliberately. Payload privacy, unread counter races, retries and dead letters matter. Prerequisite: none; Modül 08 covers workers.</p><h2>Görevler</h2><ol><li>Recent IDs sorted query. <details><summary>İpucu</summary>Use score timestamp and bounded range; cursor tie-break for same timestamp.</details></li><li>Persist unread row and counter. <details><summary>İpucu</summary>Database is source of truth; recovery rebuilds Redis.</details></li><li>Simulate consumer crash before ack. <details><summary>İpucu</summary>Pending entry can be reclaimed; event handler must be idempotent.</details></li></ol><h2>Checklist / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">SQLite migration kalıcı history için var mı?</label></li><li><label><input type="checkbox">Kullanıcı sahipliği claim’den doğrulanıyor mu?</label></li><li><label><input type="checkbox">Consumer retry, pending, ack, duplicate davranışı var mı?</label></li><li><label><input type="checkbox">SignalR/PubSub kalıcı kuyruk sanılmıyor mu?</label></li></ul><details><summary>Yanıtları göster</summary><p>1) ZSet score neden? Sıralama/pagination. 2) Redis kaybında geçmiş? SQLite’dan tekrar kurulur. 3) Pub/Sub offline teslim eder mi? Hayır. 4) Stream exactly-once mi? Hayır; at-least-once benzeri işleme/ack akışı ve idempotency gerekir.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Bildirimleri yalnızca Redis’te tutmak → gereken geçmişi SQLite’ta kalıcılaştır.</li><li>Stream ack öncesi yan etkiyi tekrar çalıştırmak → idempotent event handler.</li><li>İstemciden owner ID almak → JWT NameIdentifier kullan.</li></ul></section>
+<nav class="pager"><a href="03-jwt-token-revocation.html">← Önceki: JWT Revocation</a><a href="05-favorites-and-set-operations.html">Sonraki: Favorites →</a></nav><footer class="footer">Bildirim API’si ve entity’si mevcut uygulamada yoktur.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>

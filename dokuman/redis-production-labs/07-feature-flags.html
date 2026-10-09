@@ -1,0 +1,194 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>07 · Feature Flags</title><style>
+:root{--ink:#172b4d;--muted:#526579;--blue:#1264a3;--teal:#087e8b;--line:#d7e0e8;--bg:#f4f7fa;--amber:#a45b00}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}a:focus,button:focus,input:focus{outline:3px solid #f2b84b;outline-offset:2px}.wrap{max-width:1100px;margin:auto;padding:1rem}.hero,.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:clamp(1rem,3vw,2rem);margin:1rem 0}.hero h1{line-height:1.2;font-size:clamp(2rem,5vw,3rem);margin:.2rem 0}.badge{display:inline-block;border:1px solid #bad5e7;background:#eaf3fb;border-radius:99px;padding:.15rem .7rem;margin:.15rem;font-weight:700}.tag{color:#075d44;font-weight:700}.proposal{color:#704600;font-weight:700}.note,.warn{padding:.8rem 1rem;border-left:5px solid var(--teal);background:#eaf7f6;border-radius:6px}.warn{border-color:var(--amber);background:#fff5e4}h2{margin-top:0}h3{margin-bottom:.3rem}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:720px}th,td{border:1px solid var(--line);padding:.55rem;text-align:left;vertical-align:top}th{background:#eaf3fb}pre{position:relative;overflow:auto;background:#10243a;color:#f1f6fb;padding:2.5rem 1rem 1rem;border-radius:8px}pre code{font:.9rem/1.5 ui-monospace,Consolas,monospace}.copy{position:absolute;top:.4rem;right:.5rem;padding:.25rem .6rem;border:1px solid #adc5d8;border-radius:5px;cursor:pointer}code:not(pre code){background:#edf1f5;padding:.08rem .28rem;border-radius:4px;overflow-wrap:anywhere}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}.box{padding:.8rem;border:1px solid var(--line);border-radius:8px;background:#fbfdff}.checklist{list-style:none;padding:0}.checklist li{padding:.35rem;border-bottom:1px solid #edf1f4}.checklist input{accent-color:var(--teal)}details{padding:.55rem;border:1px solid var(--line);border-radius:7px;margin:.5rem 0}summary{cursor:pointer;font-weight:700}.flow{padding:1rem;background:#f4f8fb;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:1rem}.pager a{background:white;padding:.7rem 1rem;border:1px solid var(--line);border-radius:8px;text-decoration:none;font-weight:700}.footer{text-align:center;color:var(--muted);padding:1rem}@media(max-width:600px){.pager{flex-direction:column}}@media print{.copy,.pager{display:none}}
+</style></head><body><main class="wrap"><header class="hero"><a href="index.html">← Ana sayfa</a><p><span class="badge">Modül 07 / 12</span><span class="badge">Orta</span><span class="badge">45 dakika</span></p><h1>Feature Flags</h1><p>Uygulama deploy etmeden bir özelliği kontrollü açıp kapatın; feature flag’i authorization sanmayın.</p><span class="proposal">Önerilen geliştirme · Flag yönetim endpoint’i/Admin rolü yok</span></header>
+<section class="card"><h2>A · Problem / B · Redis neden?</h2><p>Statik appsettings değişikliği çoğu zaman uygulama restart/deploy ister ve instance’lar arasında farklılaşabilir. Merkezi Redis flag’i birden çok instance’ın aynı değeri görmesine yardım eder. String basit flag; Hash segment, rollout yüzdesi ve metadata tutabilir. Pub/Sub hızlı invalidation signal verir ama offline subscriber mesajı kaçırır ve kalıcı kuyruk değildir; per-request read veya version/poll strategy gerekir. Redis outage’da güvenli default seçin. Feature flag rollout/operational control’dür, authorization değildir. SQLite config/control record için kalıcı kaynak olabilir; Redis tek başına audit history sağlamaz.</p><h2>C · Key tasarımı</h2><table><tr><th>Key</th><th>Tip / örnek</th><th>TTL / kapsam / bellek</th></tr><tr><td><code>feature:flag:products-cache-enabled</code></td><td>String "true"/"false"</td><td>Kalıcı flag ise TTL yok; admin audit SQLite önerilir. Redis key evict olursa safe default false/true flag’in riskine göre.</td></tr><tr><td><code>feature:flag:search-rollout</code></td><td>Hash: enabled, percentage, version</td><td>Global veya stable userId segment; PII key’de yok. Hash metadata schema version’lanmalı.</td></tr></table><p>Mevcut <code>appsettings.json</code> statiktir; product cache code path’i flag ile sarılabilir, örn. <code>products:cache-enabled</code>. Cache disabled modu Module 12’de test edilir.</p></section>
+<section class="card"><h2>D · Endpoint tasarımı</h2><p>Örnekler <b>Önerilen geliştirme</b>. Yeni Admin role/policy yok; product controller’da Product rolü mevcut. Admin endpoint’i için rol değeri User.Role alanına eklenebilir veya AddAuthorization policy ile yönetilebilir; bu değişiklikler gerçek uygulamada henüz yok.</p><div class="scroll"><table><tr><th>Metot/URL</th><th>İstek / yanıt / hata</th><th>Redis / kalıcı sorumluluk</th></tr><tr><td>GET <code>api/feature-flags/products-cache</code></td><td>Authenticated caller → 200 <code>{"enabled":true}</code>; 503 on backend error.</td><td>GET flag; fallback safe default documented.</td></tr><tr><td>PUT <code>api/admin/feature-flags/products-cache</code></td><td><code>{"enabled":false}</code> → 204; 400/401/403.</td><td>SET + PUBLISH invalidation; SQLite audit record recommended.</td></tr><tr><td>GET <code>api/admin/feature-flags</code></td><td>→ full state/version; unauthorized 403.</td><td>Hash/scan known registry; SQLite audit/config table authoritative where needed.</td></tr></table></div></section>
+<section class="card"><h2>E · Uygulama, komut ve kod</h2><ol><li>Define flag registry, owner, safe default, expiry/removal date; clean stale flags.</li><li>Flag reader service uses shared singleton multiplexer; cache local copy with short refresh or version notification. Multi-instance propagation measured.</li><li>Admin change requires explicit role/policy, validation, audit and staged rollout; flag must never replace API authorization.</li><li>Pub/Sub notification accelerates cache invalidation but subscriber restart must reload authoritative value.</li></ol><section class="card"><h2>Adım Adım .NET Uygulama Rehberi</h2><p><b>Önerilen geliştirme:</b> Feature flag service/API yok. SQLite flag registry authoritative; Redis hash per-flag is cache. Admin role policy must be provisioned before testing; the current seeded role list is Product/Note.</p>
+<h3>1. Hazırlık</h3><p><b>Mevcut projeden doğrulandı:</b> .NET 9, SQLite EF Core, StackExchange.Redis 3.3.1 and singleton multiplexer exist. No package required. Redis start: <code>docker compose up -d redis</code>.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Feature flag’i authorization yerine kullanmak. Flag never grants access to protected resources.</p>
+<h3>2. Model ve migration</h3><p><b>Dosya yolu: <code>RestApi/Models/FeatureFlag.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models;
+public sealed class FeatureFlag
+{
+    [Key, StringLength(80)]
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; }
+    [Range(0, 100)]
+    public int RolloutPercentage { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Data/ApplicationDbContext.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>public DbSet&lt;FeatureFlag&gt; FeatureFlags { get; set; }</code></pre><p>From repository root:</p><p><b>Dosya/konum: Terminal</b></p><pre><button class="copy">Kopyala</button><code>dotnet ef migrations add AddFeatureFlags --project RestApi
+dotnet ef database update --project RestApi</code></pre><p>Expect table <code>FeatureFlags</code>, primary key Name. Review migration before apply; rollback with <code>dotnet ef database update &lt;previous-migration&gt; --project RestApi</code>.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> User ID rollout membership’i cache’e kalıcı kaydetmek. Evaluate deterministically from stable user ID, or deliberately persist targeting rules.</p>
+<h3>3. DTO’lar</h3><p><b>Dosya yolu: <code>RestApi/Models/dto/SetFeatureFlagDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.ComponentModel.DataAnnotations;
+namespace RestApi.Models.Dto;
+public sealed class SetFeatureFlagDto
+{
+    public bool Enabled { get; init; }
+    [Range(0, 100)]
+    public int RolloutPercentage { get; init; }
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Models/dto/FeatureFlagResultDto.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>namespace RestApi.Models.Dto;
+public sealed record FeatureFlagResultDto(
+    string Name, bool Enabled, int RolloutPercentage, bool ActiveForUser);</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Allow client to set its own userId or role; caller identity is claim-derived.</p>
+<h3>4. Redis key helper</h3><p><b>Dosya yolu: <code>RestApi/Services/FeatureFlagRedisKeys.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Text.RegularExpressions;
+namespace RestApi.Services;
+public static class FeatureFlagRedisKeys
+{
+    public static string Flag(string name) =&gt;
+        Regex.IsMatch(name, "^[a-z0-9-]{1,80}$")
+            ? $"feature:flag:{name}"
+            : throw new ArgumentException("Invalid flag name.", nameof(name));
+}</code></pre><p class="warn"><b>Bu adımda sık yapılan hata:</b> Unbounded arbitrary client strings become keys. Validate slug syntax and keep a known flag registry.</p>
+<h3>5. Servis katmanı</h3><p><b>Dosya yolu: <code>RestApi/Services/IFeatureFlagService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Threading;
+using System.Threading.Tasks;
+using RestApi.Models.Dto;
+namespace RestApi.Services;
+public interface IFeatureFlagService
+{
+    Task&lt;FeatureFlagResultDto?&gt; GetAsync(string name, int userId, CancellationToken ct);
+    Task SetAsync(string name, SetFeatureFlagDto request, CancellationToken ct);
+}</code></pre><p><b>Dosya yolu: <code>RestApi/Services/FeatureFlagService.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using RestApi.Data;
+using RestApi.Models;
+using RestApi.Models.Dto;
+using StackExchange.Redis;
+namespace RestApi.Services;
+public sealed class FeatureFlagService(
+    ApplicationDbContext context, IConnectionMultiplexer multiplexer)
+    : IFeatureFlagService
+{
+    private readonly IDatabase _redis = multiplexer.GetDatabase();
+
+    public async Task&lt;FeatureFlagResultDto?&gt; GetAsync(
+        string name, int userId, CancellationToken ct)
+    {
+        var key = (RedisKey)FeatureFlagRedisKeys.Flag(name);
+        FeatureFlag? flag = null;
+        try
+        {
+            var values = await _redis.HashGetAllAsync(key);
+            if (values.Length &gt; 0)
+            {
+                var enabled = values.FirstOrDefault(x =&gt; x.Name == "enabled").Value;
+                var percent = values.FirstOrDefault(x =&gt; x.Name == "percent").Value;
+                if (bool.TryParse(enabled.ToString(), out var on) &amp;&amp;
+                    int.TryParse(percent.ToString(), out var rollout))
+                    flag = new FeatureFlag { Name = name, Enabled = on, RolloutPercentage = rollout };
+            }
+        }
+        catch (RedisException)
+        {
+            // SQLite is authoritative: continue with source-of-truth lookup.
+        }
+        flag ??= await context.FeatureFlags.AsNoTracking()
+            .SingleOrDefaultAsync(x =&gt; x.Name == name, ct);
+        if (flag is null) return null;
+
+        try
+        {
+            await _redis.HashSetAsync(key, new[]
+            {
+                new HashEntry("enabled", flag.Enabled.ToString().ToLowerInvariant()),
+                new HashEntry("percent", flag.RolloutPercentage.ToString())
+            });
+            await _redis.KeyExpireAsync(key, TimeSpan.FromMinutes(2));
+        }
+        catch (RedisException)
+        {
+            // Cache is optional on reads; return authoritative DB result.
+        }
+        var bucket = (int)(unchecked((uint)userId * 2654435761u) % 100);
+        return new FeatureFlagResultDto(name, flag.Enabled, flag.RolloutPercentage,
+            flag.Enabled &amp;&amp; bucket &lt; flag.RolloutPercentage);
+    }
+
+    public async Task SetAsync(string name, SetFeatureFlagDto request, CancellationToken ct)
+    {
+        _ = FeatureFlagRedisKeys.Flag(name);
+        var flag = await context.FeatureFlags.SingleOrDefaultAsync(x =&gt; x.Name == name, ct);
+        if (flag is null) context.FeatureFlags.Add(flag = new FeatureFlag { Name = name });
+        flag.Enabled = request.Enabled;
+        flag.RolloutPercentage = request.RolloutPercentage;
+        flag.UpdatedAtUtc = DateTime.UtcNow;
+        await context.SaveChangesAsync(ct);
+        var key = (RedisKey)FeatureFlagRedisKeys.Flag(name);
+        await _redis.HashSetAsync(key, new[]
+        {
+            new HashEntry("enabled", flag.Enabled.ToString().ToLowerInvariant()),
+            new HashEntry("percent", flag.RolloutPercentage.ToString())
+        });
+        await _redis.KeyExpireAsync(key, TimeSpan.FromMinutes(2));
+    }
+}</code></pre><p>Read is fail-safe to SQLite on Redis errors; set saves SQLite first, then Redis failure surfaces (request may have persisted). The two-minute TTL bounds stale values on other instances. Production admin changes should also publish invalidation/audit an actor, and cache misses naturally reload DB.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Redis cache invalidation as durable audit. SQL remains source-of-truth; capture actor and change history separately if required.</p>
+<h3>6. Program.cs — DI</h3><p><b>Dosya yolu: <code>RestApi/Program.cs</code> · Existing service registrations after DbContext · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using RestApi.Services;
+builder.Services.AddScoped&lt;IFeatureFlagService, FeatureFlagService&gt;();</code></pre><p>No middleware changes.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> DbContext kullanan service’i singleton kaydetmek.</p>
+<h3>7. Controller</h3><p><b>Dosya yolu: <code>RestApi/Controllers/FeatureFlagsController.cs</code> · Önerilen geliştirme</b></p><pre><button class="copy">Kopyala</button><code>using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
+namespace RestApi.Controllers;
+[ApiController]
+[Route("api/feature-flags")]
+[Authorize]
+public sealed class FeatureFlagsController(IFeatureFlagService service) : ControllerBase
+{
+    private bool TryUserId(out int id) =&gt;
+        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out id) &amp;&amp; id &gt; 0;
+
+    [HttpGet("{name}")]
+    public async Task&lt;IActionResult&gt; Get(string name, CancellationToken ct)
+    {
+        if (!TryUserId(out var userId)) return Unauthorized();
+        try
+        {
+            var result = await service.GetAsync(name, userId, ct);
+            return result is null ? NotFound() : Ok(result);
+        }
+        catch (ArgumentException) { return BadRequest(); }
+    }
+
+    [HttpPut("{name}")]
+    [Authorize(Roles = "Admin")]
+    public async Task&lt;IActionResult&gt; Set(
+        string name, SetFeatureFlagDto request, CancellationToken ct)
+    {
+        if (!TryUserId(out _)) return Unauthorized();
+        try { await service.SetAsync(name, request, ct); return NoContent(); }
+        catch (ArgumentException) { return BadRequest(); }
+        catch (RedisException) { return StatusCode(503, new ProblemDetails { Title="Flag saved to SQLite; Redis refresh failed." }); }
+    }
+}</code></pre><p>GET 200/404, PUT 204, invalid DTO/name 400, anonymous 401, missing Admin role 403, Redis write failure 503 though DB may be saved. Provision Admin on an account before running PUT; no seeded Admin role is assumed.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Assuming Admin already exists or allowing all users to change flags. Configure role assignment out-of-band and retain API authorization independently.</p>
+<h3>8. Çalıştırıp doğrulama</h3><p><b>Dosya/konum: Terminal · obtain token using existing login, then test</b></p><pre><button class="copy">Kopyala</button><code>read -r -p "Login e-posta: " LOGIN_USER
+read -r -s -p "Login parolası: " LOGIN_PASSWORD; echo
+LOGIN_RESPONSE="$(curl -sS -X POST http://localhost:5120/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data "{\"username\":\"$LOGIN_USER\",\"password\":\"$LOGIN_PASSWORD\",\"city\":\"istanbul\"}")"
+TOKEN="$(printf '%s' "$LOGIN_RESPONSE" | jq -r '.token')"
+unset LOGIN_PASSWORD LOGIN_RESPONSE</code></pre><p><b>Dosya/konum: Terminal · configure Admin role before PUT</b></p><pre><button class="copy">Kopyala</button><code>curl -i -X PUT http://localhost:5120/api/feature-flags/products-cache \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  --data '{"enabled":true,"rolloutPercentage":25}'
+curl -i http://localhost:5120/api/feature-flags/products-cache \
+  -H "Authorization: Bearer $TOKEN"
+docker exec -it redis-lab redis-cli HGETALL feature:flag:products-cache
+unset TOKEN LOGIN_USER</code></pre><p>PUT returns 204 for an Admin claim; GET returns e.g. <code>{"name":"products-cache","enabled":true,"rolloutPercentage":25,"activeForUser":false}</code> (bucket depends on user ID). Unknown flag gives 404; Redis hash stores enabled/percent. Non-Admin PUT is 403.</p><p class="warn"><b>Bu adımda sık yapılan hata:</b> Rollout sonucu her request’te rastgele üretmek. Stable claim userId makes cohort stick across requests.</p>
+<h3>9. Son kontrol</h3><ul class="checklist"><li><label><input type="checkbox">SQLite registry is authoritative and migrated.</label></li><li><label><input type="checkbox">Admin role is actually provisioned.</label></li><li><label><input type="checkbox">Redis outage read falls back to SQLite.</label></li><li><label><input type="checkbox">Flag never replaces authorization.</label></li></ul><p class="warn"><b>Bu adımda sık yapılan hata:</b> Final doğrulamayı atlayıp yalnızca başarılı HTTP yanıtına güvenmek; kalıcı DB state’i, Redis key’i ve hata senaryosunu birlikte kontrol edin.</p></section>
+<pre><button class="copy">Kopyala</button><code>docker exec -it redis-lab redis-cli
+SET feature:flag:products-cache-enabled true
+GET feature:flag:products-cache-enabled
+HSET feature:flag:search-rollout enabled true percentage 10 version 3
+PUBLISH feature:flags:changed products-cache-enabled</code></pre><p>PUBLISH returns subscriber count, not durable delivery. Late subscriber misses event; refresh actual key.</p><h3>.NET örneği · Services/FeatureFlagService.cs</h3><pre><button class="copy">Kopyala</button><code>public sealed class FeatureFlagService(IConnectionMultiplexer mux)
+{
+    public async Task&lt;bool&gt; IsEnabledAsync(string flag)
+    {
+        var value = await mux.GetDatabase()
+            .StringGetAsync($"feature:flag:{flag}");
+        return value == "true"; // safe default is false in this sample
+    }
+}</code></pre><p>Real default varies per flag; do not make missing/error look universally false. For restricted operation report failure explicitly; DI AddScoped.</p></section>
+<section class="card"><h2>F · Akış, riskler, öğrenme</h2><div class="flow">HTTP → ErrorHandlerMiddleware → GlobalMiddleware → Authentication → Authorization (admin policy öneri) → FlagController → Redis GET/SET/PUBLISH → SQLite audit (öneri)</div><div class="cols"><div class="box"><b>Success:</b> authorized change persisted/versioned → publish signal → instances reload.</div><div class="box"><b>Failure:</b> Redis unavailable → per-flag safe default and explicit alert; do not skip authorization.</div></div><ul><li>Flag key eviction/restart can revert behavior; choose fail-safe default and source of truth.</li><li>Pub/Sub not queue; no offline catch-up or ack. Redis outage should not open risky feature by accident.</li><li>Flag proliferation creates dead branches; owner and removal date.</li><li>Segment evaluation needs stable userId, not username/email; rollout algorithm deterministic.</li></ul><p>Outcomes: dynamic config, safe defaults, Pub/Sub boundary, flag vs authorization. Prior module none; Module 12 links cache flag to measurement.</p><h2>Görevler</h2><ol><li>Wrap ProductController cache path with flag. <details><summary>İpucu</summary>Do not change existing code in this lab; proposed service can be added separately.</details></li><li>Add percentage rollout per user. <details><summary>İpucu</summary>Stable hash(userId, flag version), no PII.</details></li><li>Restart subscriber during publish and recover. <details><summary>İpucu</summary>Initial load/version polling is necessary.</details></li></ol><h2>Checklist / kendini değerlendir</h2><ul class="checklist"><li><label><input type="checkbox">Flag access control separate from flag value.</label></li><li><label><input type="checkbox">Safe default, audit, owner and expiry defined.</label></li><li><label><input type="checkbox">Pub/Sub lost notification reconciled by reload.</label></li><li><label><input type="checkbox">Redis outage behavior tested.</label></li></ul><details><summary>Yanıtları göster</summary><p>1) Pub/Sub kalıcı mı? Hayır. 2) Flag yetki verir mi? Hayır. 3) Segment key identifier? Stable userId. 4) Redis missing key? Safe default chosen per flag and observable.</p></details><h3>Sık yapılan hatalar</h3><ul><li>Publish’i durable update sanmak → Redis key/SQLite audit source ile reconcile.</li><li>Flag’e bakıp access control atlamak → policy/role authorization ayrı.</li><li>Flag’i hiç kaldırmamak → owner ve cleanup deadline.</li></ul></section>
+<nav class="pager"><a href="06-otp-verification.html">← Önceki: OTP</a><a href="08-background-jobs-and-streams.html">Sonraki: Background Jobs →</a></nav><footer class="footer">Flag örnekleri öneridir; mevcut uygulamada feature flag yok.</footer></main><script>document.querySelectorAll(".copy").forEach(b=>b.addEventListener("click",async()=>{const s=b.nextElementSibling.textContent;try{await navigator.clipboard.writeText(s)}catch{const t=document.createElement("textarea");t.value=s;document.body.append(t);t.select();document.execCommand("copy");t.remove()}b.textContent="Kopyalandı";setTimeout(()=>b.textContent="Kopyala",1300)}));</script></body></html>
