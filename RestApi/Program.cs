@@ -67,7 +67,7 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        options.MapInboundClaims = false;
+        options.MapInboundClaims = true;
         options.Events = new JwtBearerEvents
         {
             OnAuthenticationFailed = context =>
