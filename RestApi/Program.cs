@@ -1,21 +1,20 @@
+
 using Microsoft.EntityFrameworkCore;
 using RestApi.Data;
+using RestApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using System.Text;
-using System.Threading.RateLimiting;
-
 using StackExchange.Redis;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// IDistributedCache registration
+// Redis bağlantısı
 var redisConnection =
     builder.Configuration["Redis:ConnectionString"]
     ?? throw new InvalidOperationException(
         "Redis:ConnectionString configuration is missing.");
 
-// Register exactly one multiplexer per application process.
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
     var options = ConfigurationOptions.Parse(redisConnection);
@@ -26,49 +25,50 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     options.SyncTimeout = 5000;
 
     return ConnectionMultiplexer.Connect(options);
-});       
-
-// Rate Limiting
-builder.Services.AddRateLimiter(options =>
-{
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: httpContext.User.Identity?.Name ?? httpContext.Request.Headers.Host.ToString(),
-            factory: partition => new FixedWindowRateLimiterOptions
-            {
-                AutoReplenishment = true,
-                PermitLimit = 1,
-                QueueLimit = 0,
-                Window = TimeSpan.FromSeconds(1)
-            }));
 });
 
-// Add services to the container.
+// Servisler
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(
+        builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<ICartService, CartService>();
+builder.Services.AddScoped<IRateLimitService, RateLimitService>();
+
 builder.Services.AddControllers();
+builder.Services.AddAuthorization();
 
+// CORS
+const string MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
 
-var  MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy(name: MyAllowSpecificOrigins,
-    policy  =>
+    options.AddPolicy(MyAllowSpecificOrigins, policy =>
     {
-        policy.WithOrigins("http://localhost:5120/", "https://localhost:3000/")
-        .AllowAnyHeader()
-        .AllowAnyMethod()
-        .AllowCredentials();
+        policy
+            .WithOrigins(
+                "http://localhost:5120",
+                "https://localhost:3000")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
+// JWT Authentication
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException(
+        "Jwt:Key configuration is missing.");
 
-var key = Encoding.ASCII.GetBytes(builder.Configuration.GetValue<string>("Jwt:Key"));
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+var key = Encoding.ASCII.GetBytes(jwtKey);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        options.RequireHttpsMetadata = false;
+        options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         options.SaveToken = true;
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
@@ -80,19 +80,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 var app = builder.Build();
 
-// https config
+// HTTPS
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
-    app.UseHttpsRedirection();
-    //app.UseXXSProtection( options => options.EnabledWithBlockMode());
 }
-    
 
-// Configure Cors policy
+app.UseHttpsRedirection();
+
+// CORS
 app.UseCors(MyAllowSpecificOrigins);
 
-// Configure the HTTP request pipeline.
+// Hata yönetimi
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
@@ -100,9 +99,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseMiddleware<ErrorHandlerMiddleware>();
 app.UseMiddleware<GlobalMiddleware>();
-// app.UseRateLimiter();
-app.UseHttpsRedirection();
+
+// Authentication -> Rate Limiting -> Authorization
 app.UseAuthentication();
+
+app.UseMiddleware<GlobalRateLimitMiddleware>();
+
 app.UseAuthorization();
 
 app.MapControllers();
