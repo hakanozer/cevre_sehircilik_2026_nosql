@@ -7,7 +7,10 @@ using Microsoft.VisualBasic;
 using RestApi.Data;
 using RestApi.Models;
 using RestApi.Models.Dto;
+using RestApi.Services;
+using StackExchange.Redis;
 using System;
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Security.Claims;
@@ -23,11 +26,13 @@ namespace RestApi.Controllers
         string name = "";
         private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly ITokenRevocationService revocations;
 
-        public AuthController(ApplicationDbContext context, IConfiguration configuration)
+        public AuthController(ApplicationDbContext context, IConfiguration configuration, ITokenRevocationService revocations)
         {
             _configuration = configuration;
             _context = context;
+            this.revocations = revocations;
         }
         
 
@@ -111,6 +116,7 @@ namespace RestApi.Controllers
                 Subject = new ClaimsIdentity(new Claim[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, existingUser.Id.ToString()),
+                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
                     new Claim(ClaimTypes.Name, existingUser.Username)
                 }),
                 Expires = DateTime.UtcNow.AddHours(1),
@@ -123,6 +129,11 @@ namespace RestApi.Controllers
 
             var token = tokenHandler.CreateToken(tokenDescriptor);
             var tokenString = tokenHandler.WriteToken(token);
+            var parsedToken = tokenHandler.ReadJwtToken(tokenString);
+            Console.WriteLine(
+                $"JWT jti: {parsedToken.Claims
+                    .FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Jti)?.Value}"
+            );
             existingUser.Password = null; // Remove password from the response
             return Ok(new { Token = tokenString, User = existingUser });
         }
@@ -135,6 +146,35 @@ namespace RestApi.Controllers
                 tokenDescriptor.Subject.AddClaim(new Claim(ClaimTypes.Role, role));
             }
         }
+
+
+            [HttpPost("logout")]
+            public async Task<IActionResult> Logout()
+            {
+                if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
+                    || userId <= 0)
+                    return Unauthorized();
+                var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+                var exp = User.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+                if (string.IsNullOrWhiteSpace(jti)
+                    || !long.TryParse(exp, NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out var seconds))
+                    return Unauthorized();
+
+                try
+                {
+                    await revocations.RevokeAsync(
+                        jti, DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime);
+                    return NoContent();
+                }
+                catch (RedisException)
+                {
+                    return StatusCode(503, new ProblemDetails
+                    {
+                        Status = 503, Title = "Token revocation store unavailable."
+                    });
+                }
+            }
 
     }
 }

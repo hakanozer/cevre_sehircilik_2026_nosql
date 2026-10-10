@@ -34,6 +34,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IRateLimitService, RateLimitService>();
+builder.Services.AddScoped<ITokenRevocationService, TokenRevocationService>();
 
 builder.Services.AddControllers();
 builder.Services.AddAuthorization();
@@ -66,6 +67,61 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.MapInboundClaims = false;
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine(
+                    $"JWT authentication failed: {context.Exception}"
+                );
+
+                return Task.CompletedTask;
+            },
+
+            OnChallenge = context =>
+            {
+                Console.WriteLine(
+                    $"JWT challenge: {context.Error} - {context.ErrorDescription}"
+                );
+
+                return Task.CompletedTask;
+            },
+
+            OnTokenValidated = async context =>
+            {
+                var jti = context.Principal?
+                    .FindFirst(
+                        System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti
+                    )?.Value;
+
+                if (string.IsNullOrWhiteSpace(jti))
+                {
+                    context.Fail("Required token identifier is missing.");
+                    return;
+                }
+
+                var service = context.HttpContext.RequestServices
+                    .GetRequiredService<ITokenRevocationService>();
+
+                try
+                {
+                    if (await service.IsRevokedAsync(jti))
+                    {
+                        context.Fail("Token has been revoked.");
+                    }
+                }
+                catch (RedisException ex)
+                {
+                    Console.WriteLine(
+                        $"Token revocation service is unavailable: {ex.Message}"
+                    );
+
+                    context.Fail("Token revocation service is unavailable.");
+                }
+            }
+        };
+        
         options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         options.SaveToken = true;
 
