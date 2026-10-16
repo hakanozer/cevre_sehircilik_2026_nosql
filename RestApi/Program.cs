@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 using System.Text;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +16,15 @@ var redisConnection =
     builder.Configuration["Redis:ConnectionString"]
     ?? throw new InvalidOperationException(
         "Redis:ConnectionString configuration is missing.");
+
+// OpenTelemetry ile trace ve metrik:
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddRedisInstrumentation())      // OpenTelemetry.Instrumentation.StackExchangeRedis
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddPrometheusExporter());       // veya OTLP ile collector'a        
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
@@ -135,6 +146,7 @@ builder.Services
     });
 
 var app = builder.Build();
+app.MapPrometheusScrapingEndpoint();   // varsayılan: /metrics
 
 // HTTPS
 if (!app.Environment.IsDevelopment())

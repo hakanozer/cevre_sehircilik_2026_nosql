@@ -1,13 +1,81 @@
+x-sentinel: &sentinel
+  image: redis:8.10
+  command:
+    - sh
+    - -c
+    - |
+      printf 'port 26379\nsentinel resolve-hostnames yes\nsentinel announce-hostnames yes\nsentinel monitor training-primary redis 6379 2\nsentinel down-after-milliseconds training-primary 5000\nsentinel failover-timeout training-primary 60000\nsentinel parallel-syncs training-primary 1\n' > /tmp/sentinel.conf
+      exec redis-server /tmp/sentinel.conf --sentinel
+  depends_on:
+    redis:
+      condition: service_healthy
+    replica:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   redis:
-    image: redis:8.10.2
+    image: redis:8.10
     container_name: redis-lab
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  replica:
+    image: redis:8.10
+    container_name: redis-lab-replica
+    command: ["redis-server", "--replicaof", "redis", "6379", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redis-replica-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  sentinel-1:
+    <<: *sentinel
+    container_name: redis-sentinel-1
+  sentinel-2:
+    <<: *sentinel
+    container_name: redis-sentinel-2
+  sentinel-3:
+    <<: *sentinel
+    container_name: redis-sentinel-3
+
+  redis-exporter:
+    image: oliver006/redis_exporter
+    ports: ["127.0.0.1:9121:9121"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["127.0.0.1:9090:9090"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
     restart: unless-stopped
 
 volumes:
   redis-data:
+  redis-replica-data:
+  grafana-data:
