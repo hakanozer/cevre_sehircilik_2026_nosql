@@ -17,7 +17,8 @@ services:
   redis:
     image: redis:8.10
     container_name: redis-lab
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru",
+              "--replica-announce-ip", "redis", "--replica-announce-port", "6379"]
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -32,14 +33,18 @@ services:
   replica:
     image: redis:8.10
     container_name: redis-lab-replica
-    command: ["redis-server", "--replicaof", "redis", "6379", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--port", "6380", "--replicaof", "redis", "6379",
+              "--replica-announce-ip", "replica", "--replica-announce-port", "6380",
+              "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6380:6380"
     depends_on:
       redis:
         condition: service_healthy
     volumes:
       - redis-replica-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10

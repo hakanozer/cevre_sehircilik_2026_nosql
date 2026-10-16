@@ -12,19 +12,10 @@ using OpenTelemetry.Trace;
 var builder = WebApplication.CreateBuilder(args);
 
 // Redis bağlantısı
-var redisSection = builder.Configuration.GetSection("Redis");
-var redisServiceName = redisSection["ServiceName"]
+var redisConnection =
+    builder.Configuration["Redis:ConnectionString"]
     ?? throw new InvalidOperationException(
-        "Redis:ServiceName configuration is missing.");
-var redisSentinels = redisSection.GetSection("Sentinels")
-    .Get<string[]>()
-    ?? throw new InvalidOperationException(
-        "Redis:Sentinels configuration is missing.");
-if (redisSentinels.Length == 0)
-{
-    throw new InvalidOperationException(
-        "Redis:Sentinels must contain at least one endpoint.");
-}
+        "Redis:ConnectionString configuration is missing.");
 
 // OpenTelemetry ile trace ve metrik:
 builder.Services.AddOpenTelemetry()
@@ -37,22 +28,14 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
-    var options = new ConfigurationOptions
-    {
-        ServiceName = redisServiceName,
-        AbortOnConnectFail = false,
-        ConnectRetry = 3,
-        ConnectTimeout = 5000,
-        SyncTimeout = 5000,
-        AsyncTimeout = 5000
-    };
+    var options = ConfigurationOptions.Parse(redisConnection);
 
-    foreach (var sentinel in redisSentinels)
-    {
-        options.EndPoints.Add(sentinel);
-    }
-    var sentinelConnection = ConnectionMultiplexer.SentinelConnect(options);
-    return sentinelConnection.GetSentinelMasterConnection(options);
+    options.AbortOnConnectFail = false;
+    options.ConnectRetry = 3;
+    options.ConnectTimeout = 5000;
+    options.SyncTimeout = 5000;
+
+    return ConnectionMultiplexer.Connect(options);
 });
 
 // Servisler
@@ -164,7 +147,6 @@ builder.Services
 
 var app = builder.Build();
 app.MapPrometheusScrapingEndpoint();   // varsayılan: /metrics
-
 // HTTPS
 if (!app.Environment.IsDevelopment())
 {
