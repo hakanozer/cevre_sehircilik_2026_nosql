@@ -48,12 +48,18 @@ services:
   sentinel-1:
     <<: *sentinel
     container_name: redis-sentinel-1
+    ports:
+      - "127.0.0.1:26379:26379"
   sentinel-2:
     <<: *sentinel
     container_name: redis-sentinel-2
+    ports:
+      - "127.0.0.1:26380:26379"
   sentinel-3:
     <<: *sentinel
     container_name: redis-sentinel-3
+    ports:
+      - "127.0.0.1:26381:26379"
 
   redis-exporter:
     image: oliver006/redis_exporter
