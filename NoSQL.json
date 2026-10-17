@@ -116,6 +116,88 @@
       ]
     },
     {
+      "name": "notification",
+      "item": [
+        {
+          "name": "Save",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \n    \"type\":\"Ali product\",\n    \"title\":\"Ali Price changed\",\n    \"message\":\"Ali A product price changed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost:5120/api/notifications",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "5120",
+              "path": [
+                "api",
+                "notifications"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:5120/api/notifications?count=10",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "5120",
+              "path": [
+                "api",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "count",
+                  "value": "10"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:5120/api/notifications/3/read",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "5120",
+              "path": [
+                "api",
+                "notifications",
+                "3",
+                "read"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "User Login",
       "request": {
         "auth": {
@@ -125,7 +207,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"Username\": \"hasan@mail.com\",\n    \"Password\": \"12345\",\n    \"City\": \"ankara\"\n}",
+          "raw": "{\n    \"Username\": \"ali@mail.com\",\n    \"Password\": \"12345\",\n    \"City\": \"ankara\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -259,7 +341,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"Name\": \"Samsung 11\",\n    \"Price\": 130000\n}",
+          "raw": "{\n    \"Name\": \"Samsung 13\",\n    \"Price\": 130000\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -411,6 +493,35 @@
         }
       },
       "response": []
+    },
+    {
+      "name": "Pub/Sub",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"orderId\": \"ORD-1001\",\n  \"customerName\": \"Ahmet Yılmaz\",\n  \"productName\": \"Kablosuz Klavye\",\n  \"quantity\": 2\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:5120/api/orders",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5120",
+          "path": [
+            "api",
+            "orders"
+          ]
+        }
+      },
+      "response": []
     }
   ],
   "auth": {
@@ -418,7 +529,7 @@
     "bearer": [
       {
         "key": "token",
-        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1laWQiOiIzIiwianRpIjoiMzZmMDRlYzktNjRkNS00NDUzLTg0MmMtZTFjZGMzYmQwZjVlIiwidW5pcXVlX25hbWUiOiJoYXNhbkBtYWlsLmNvbSIsInJvbGUiOlsiUHJvZHVjdCIsIk5vdGUiXSwibmJmIjoxNzkyMTMzNDE0LCJleHAiOjE3OTIxMzcwMTQsImlhdCI6MTc5MjEzMzQxNH0.fhRwSzf_vOc8nLpzUNVc4kUFabY5NEJJyHfAotqN66o",
+        "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1laWQiOiIxIiwianRpIjoiMjA1MGMxYTYtMDgxMS00NTM3LWEwYTAtZDAxYWJiNmEyM2U0IiwidW5pcXVlX25hbWUiOiJhbGlAbWFpbC5jb20iLCJyb2xlIjoiUHJvZHVjdCIsIm5iZiI6MTc5MjIyNDU2OSwiZXhwIjoxNzkyMjQ5NzY5LCJpYXQiOjE3OTIyMjQ1Njl9.kl8RnW8ValUhmx4XE3KHI4A3ZVuBzOXlzeYOu01mpw4",
         "type": "string"
       }
     ]
