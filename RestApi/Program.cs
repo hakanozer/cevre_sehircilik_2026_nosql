@@ -47,6 +47,9 @@ builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IRateLimitService, RateLimitService>();
 builder.Services.AddScoped<ITokenRevocationService, TokenRevocationService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IRedisPublisher, RedisPublisher>();
+
+builder.Services.AddHostedService<RedisSubscriberService>();
 
 builder.Services.AddControllers();
 builder.Services.AddAuthorization();
