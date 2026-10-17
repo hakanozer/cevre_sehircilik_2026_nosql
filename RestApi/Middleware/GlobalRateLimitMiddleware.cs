@@ -36,16 +36,16 @@ public sealed class GlobalRateLimitMiddleware
             // Rol önceliği: Note > Product > genel kullanıcı
             if (user.IsInRole("Note"))
             {
-                limit = 30;
+                limit = 3000;
             }
             else if (user.IsInRole("Product"))
             {
-                limit = 20;
+                limit = 2000;
             }
             else
             {
                 // Kimliği doğrulanmış ama özel rolü olmayan kullanıcı
-                limit = 10;
+                limit = 1000;
             }
 
             partitionKey = $"user:{userId}";

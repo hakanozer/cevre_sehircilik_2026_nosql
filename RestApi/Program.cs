@@ -48,8 +48,14 @@ builder.Services.AddScoped<IRateLimitService, RateLimitService>();
 builder.Services.AddScoped<ITokenRevocationService, TokenRevocationService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IRedisPublisher, RedisPublisher>();
+builder.Services.AddScoped<IOtpDelivery, DevelopmentConsoleOtpDelivery>();
+builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddSingleton<IJobQueue, RedisJobQueue>();
+
 
 builder.Services.AddHostedService<RedisSubscriberService>();
+builder.Services.AddHostedService<JobStreamWorker>();
+
 
 builder.Services.AddControllers();
 builder.Services.AddAuthorization();
